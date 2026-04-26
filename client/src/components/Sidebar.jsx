@@ -40,10 +40,10 @@ export default function Sidebar({
   return (
     <nav className="sidebar">
       <div className="sidebar-logo">
-        <svg viewBox="0 0 24 24">
-          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
         </svg>
-        <span className="sidebar-logo-text">Bookmarks</span>
+        <span className="sidebar-logo-text">Third Street<br/>Bookmarks</span>
       </div>
 
       {/* Filter */}

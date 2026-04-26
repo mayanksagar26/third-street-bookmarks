@@ -17,7 +17,7 @@ export default function Header({ searchQuery, onSearch, resultCount }) {
 
   return (
     <div className="header">
-      <span className="header-title">Bookmarks</span>
+      <span className="header-title" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>Third Street Bookmarks</span>
       <div className="search-wrap">
         <span className="search-icon">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
