@@ -1,6 +1,49 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 
-export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, syncState, onSync }) {
+const TOOLS = [
+  {
+    id: 'chat',
+    label: 'Chat with Bookmarks',
+    desc: 'Ask questions about your collection',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'stats',
+    label: 'Stats & Observations',
+    desc: 'Trends, charts, monthly breakdown',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'podcast',
+    label: 'Bookmark Podcast',
+    desc: 'Audio digest of your bookmarks',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 1a9 9 0 0 0-9 9v7c0 1.1.9 2 2 2h1v-8H4v-1a8 8 0 1 1 16 0v1h-2v8h1c1.1 0 2-.9 2-2v-7a9 9 0 0 0-9-9z"/>
+      </svg>
+    ),
+  },
+];
+
+export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, syncState, onSync, activeMode, setActiveMode }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e) => { if (!menuRef.current?.contains(e.target)) setMenuOpen(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [menuOpen]);
+
   const authors = useMemo(() => {
     const count = {};
     const meta = {};
@@ -17,6 +60,41 @@ export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, sync
 
   return (
     <aside className="right-panel">
+      {/* Profile / Tools */}
+      <div className="panel-card profile-card" ref={menuRef}>
+        <button className="profile-btn" onClick={() => setMenuOpen(p => !p)}>
+          <div className="profile-avatar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+          </div>
+          <span className="profile-btn-label">Profile</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 'auto', color: 'var(--text-tertiary)', transform: menuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+            <path d="M7 10l5 5 5-5z"/>
+          </svg>
+        </button>
+
+        {menuOpen && (
+          <div className="profile-menu">
+            {TOOLS.map(tool => (
+              <button
+                key={tool.id}
+                className={`profile-menu-item ${activeMode === tool.id ? 'active' : ''}`}
+                onClick={() => { setActiveMode(activeMode === tool.id ? null : tool.id); setMenuOpen(false); }}
+              >
+                <span className="profile-menu-icon">{tool.icon}</span>
+                <div className="profile-menu-info">
+                  <div className="profile-menu-label">{tool.label}</div>
+                  <div className="profile-menu-desc">{tool.desc}</div>
+                </div>
+                {activeMode === tool.id && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--accent)"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Voices */}
       <div className="panel-card">
         <div className="panel-card-title">Voices</div>
         <div className="voices-list">
@@ -39,6 +117,7 @@ export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, sync
         </div>
       </div>
 
+      {/* Sync */}
       <div className="panel-card">
         <div className="panel-card-title">Sync &amp; Classify</div>
         <button className={btnClass} onClick={onSync}>

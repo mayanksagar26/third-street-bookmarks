@@ -5,6 +5,9 @@ import SortBar from './components/SortBar';
 import StatsBar from './components/StatsBar';
 import Feed from './components/Feed';
 import RightPanel from './components/RightPanel';
+import ChatWithBookmarks from './components/ChatWithBookmarks';
+import StatsObservations from './components/StatsObservations';
+import BookmarkPodcast from './components/BookmarkPodcast';
 
 const PAGE_SIZE = 30;
 
@@ -37,6 +40,7 @@ export default function App() {
   const [showUnreadOnly, setShowUnreadOnly]     = useState(true);
   const [selectedCategories, setSelectedCats]   = useState(new Set());
   const [syncState, setSyncState]               = useState({ status: 'idle', msg: '' });
+  const [activeMode, setActiveMode]             = useState(null);
 
   // Load bookmarks
   useEffect(() => {
@@ -227,27 +231,37 @@ export default function App() {
         folderCounts={folderCounts}
       />
       <main className="main">
-        <Header
-          searchQuery={searchQuery}
-          onSearch={(q) => { setSearchQuery(q.trim().toLowerCase()); setCurrentPage(1); }}
-          resultCount={filtered.length !== allBookmarks.length ? filtered.length : null}
-        />
-        <SortBar currentSort={currentSort} onSort={(s) => { setCurrentSort(s); setCurrentPage(1); }} />
-        {!loading && !error && <StatsBar bookmarks={allBookmarks} />}
-        <Feed
-          bookmarks={filtered}
-          page={currentPage}
-          pageSize={PAGE_SIZE}
-          loading={loading}
-          error={error}
-          searchQuery={searchQuery}
-          readIds={readIds}
-          favMap={favMap}
-          favFolders={favFolders}
-          onToggleRead={handleToggleRead}
-          onToggleFav={handleToggleFav}
-          onPageChange={setCurrentPage}
-        />
+        {activeMode === 'chat' ? (
+          <ChatWithBookmarks bookmarks={allBookmarks} onClose={() => setActiveMode(null)} />
+        ) : activeMode === 'stats' ? (
+          <StatsObservations bookmarks={allBookmarks} onClose={() => setActiveMode(null)} />
+        ) : activeMode === 'podcast' ? (
+          <BookmarkPodcast bookmarks={allBookmarks} onClose={() => setActiveMode(null)} />
+        ) : (
+          <>
+            <Header
+              searchQuery={searchQuery}
+              onSearch={(q) => { setSearchQuery(q.trim().toLowerCase()); setCurrentPage(1); }}
+              resultCount={filtered.length !== allBookmarks.length ? filtered.length : null}
+            />
+            <SortBar currentSort={currentSort} onSort={(s) => { setCurrentSort(s); setCurrentPage(1); }} />
+            {!loading && !error && <StatsBar bookmarks={allBookmarks} />}
+            <Feed
+              bookmarks={filtered}
+              page={currentPage}
+              pageSize={PAGE_SIZE}
+              loading={loading}
+              error={error}
+              searchQuery={searchQuery}
+              readIds={readIds}
+              favMap={favMap}
+              favFolders={favFolders}
+              onToggleRead={handleToggleRead}
+              onToggleFav={handleToggleFav}
+              onPageChange={setCurrentPage}
+            />
+          </>
+        )}
       </main>
       <RightPanel
         bookmarks={allBookmarks}
@@ -255,6 +269,8 @@ export default function App() {
         onVoiceClick={handleVoiceClick}
         syncState={syncState}
         onSync={handleSync}
+        activeMode={activeMode}
+        setActiveMode={setActiveMode}
       />
     </div>
   );
