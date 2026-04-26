@@ -1,0 +1,14 @@
+{
+  "name": "third-street-bookmarks",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "setup": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently \"node server/index.js\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "node server/index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
