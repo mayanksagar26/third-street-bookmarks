@@ -20,7 +20,6 @@ export default function Sidebar({
   showUnreadOnly, onToggleUnread,
   catCounts, selectedCategories, onToggleCategory, onClearCategories,
   favMap, favFolders, folderCounts,
-  syncState, onSync,
 }) {
   const [catSearch, setCatSearch] = useState('');
 
@@ -34,8 +33,6 @@ export default function Sidebar({
   const selected = visibleCats.filter(([cat]) => selectedCategories.has(cat));
   const rest = visibleCats.filter(([cat]) => !selectedCategories.has(cat));
   const orderedCats = [...selected, ...rest];
-
-  const btnClass = `action-btn ${syncState.status !== 'idle' ? syncState.status : ''}`.trim();
 
   return (
     <nav className="sidebar">
@@ -181,17 +178,6 @@ export default function Sidebar({
       )}
 
       <div style={{ flex: 1 }} />
-
-      {/* Sync button */}
-      <div className="sidebar-bottom">
-        <button className={btnClass} onClick={onSync}>
-          <svg viewBox="0 0 24 24" fill="currentColor" className={syncState.status === 'running' ? 'spin' : ''}>
-            <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
-          </svg>
-          Sync &amp; Classify
-        </button>
-        {syncState.msg && <div className="action-status">{syncState.msg}</div>}
-      </div>
     </nav>
   );
 }

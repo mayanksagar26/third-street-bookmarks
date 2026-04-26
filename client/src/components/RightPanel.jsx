@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-export default function RightPanel({ bookmarks, currentVoice, onVoiceClick }) {
+export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, syncState, onSync }) {
   const authors = useMemo(() => {
     const count = {};
     const meta = {};
@@ -12,6 +12,8 @@ export default function RightPanel({ bookmarks, currentVoice, onVoiceClick }) {
       handle, count: c, ...meta[handle],
     }));
   }, [bookmarks]);
+
+  const btnClass = `action-btn ${syncState.status !== 'idle' ? syncState.status : ''}`.trim();
 
   return (
     <aside className="right-panel">
@@ -35,6 +37,17 @@ export default function RightPanel({ bookmarks, currentVoice, onVoiceClick }) {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="panel-card">
+        <div className="panel-card-title">Sync &amp; Classify</div>
+        <button className={btnClass} onClick={onSync}>
+          <svg viewBox="0 0 24 24" fill="currentColor" className={syncState.status === 'running' ? 'spin' : ''}>
+            <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+          </svg>
+          Sync &amp; Classify
+        </button>
+        {syncState.msg && <div className="action-status" style={{ marginTop: 6 }}>{syncState.msg}</div>}
       </div>
     </aside>
   );

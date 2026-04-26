@@ -224,8 +224,6 @@ export default function App() {
         favMap={favMap}
         favFolders={favFolders}
         folderCounts={folderCounts}
-        syncState={syncState}
-        onSync={handleSync}
       />
       <main className="main">
         <Header
@@ -254,6 +252,8 @@ export default function App() {
         bookmarks={allBookmarks}
         currentVoice={currentVoice}
         onVoiceClick={handleVoiceClick}
+        syncState={syncState}
+        onSync={handleSync}
       />
     </div>
   );
