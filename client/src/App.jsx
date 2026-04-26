@@ -191,6 +191,7 @@ export default function App() {
 
   const handleFilterChange = useCallback((filter) => {
     setCurrentFilter(prev => (prev === filter && filter !== 'all') ? 'all' : filter);
+    if (filter === 'all') setShowUnreadOnly(false);
     setCurrentPage(1);
   }, []);
 
