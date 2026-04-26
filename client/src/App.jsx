@@ -34,7 +34,7 @@ export default function App() {
   const [readIds, setReadIds]                   = useState(new Set());
   const [favMap, setFavMap]                     = useState({});
   const [currentVoice, setCurrentVoice]         = useState(null);
-  const [showUnreadOnly, setShowUnreadOnly]     = useState(false);
+  const [showUnreadOnly, setShowUnreadOnly]     = useState(true);
   const [selectedCategories, setSelectedCats]   = useState(new Set());
   const [syncState, setSyncState]               = useState({ status: 'idle', msg: '' });
 
