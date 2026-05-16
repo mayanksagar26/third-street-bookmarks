@@ -1781,3 +1781,18 @@ kbd {
 .podcast-v2-idx { font-size: 18px; font-weight: 700; color: var(--text-primary); }
 .podcast-v2-sep { color: var(--text-tertiary); }
 .podcast-v2-total { color: var(--text-secondary); }
+
+/* ── Podcast speed bar ── */
+.podcast-speed-bar {
+  display: flex; align-items: center; justify-content: center;
+  gap: 4px; padding: 8px 24px 0;
+  flex-shrink: 0;
+}
+.podcast-speed-btn {
+  padding: 4px 10px; border-radius: 9999px;
+  border: 1px solid var(--border); background: none;
+  color: var(--text-tertiary); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.12s;
+}
+.podcast-speed-btn:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
+.podcast-speed-btn.active { border-color: var(--accent); background: rgba(29,155,240,0.12); color: var(--accent); }

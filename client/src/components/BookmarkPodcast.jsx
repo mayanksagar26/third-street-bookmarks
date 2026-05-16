@@ -171,6 +171,8 @@ export default function BookmarkPodcast({ bookmarks, ttsConfig, onSetTtsConfig, 
   const [currentIdx, setCurrentIdx]   = useState(0);
   const [isPlaying, setIsPlaying]     = useState(false);
   const [playError, setPlayError]     = useState('');
+  const [speed, setSpeed]             = useState(1);
+  const speedRef                      = useRef(1);
 
   const audioRef        = useRef(null);
   const synthRef        = useRef(window.speechSynthesis);
@@ -324,17 +326,19 @@ export default function BookmarkPodcast({ bookmarks, ttsConfig, onSetTtsConfig, 
       if (selectedProvider.id === 'elevenlabs' && key) {
         const audio = await speakElevenLabs(text, key, voice);
         audioRef.current = audio;
+        audio.playbackRate = speedRef.current;
         audio.onended = onEnd;
         audio.play();
       } else if (selectedProvider.id === 'sarvam' && key) {
         const audio = await speakSarvam(text, key, voice);
         audioRef.current = audio;
+        audio.playbackRate = speedRef.current;
         audio.onended = onEnd;
         audio.play();
       } else {
         synthRef.current?.cancel();
         const utter = new SpeechSynthesisUtterance(text);
-        utter.rate = 0.92;
+        utter.rate = speedRef.current;
         utter.onend = onEnd;
         synthRef.current?.speak(utter);
       }
@@ -388,6 +392,18 @@ export default function BookmarkPodcast({ bookmarks, ttsConfig, onSetTtsConfig, 
     abortRef.current?.abort();
     playingRef.current = false;
     setIsPlaying(false);
+  }
+
+  function changeSpeed(s) {
+    speedRef.current = s;
+    setSpeed(s);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = s;
+    } else if (isPlaying && synthRef.current) {
+      // Browser TTS: restart current segment at new rate
+      synthRef.current.cancel();
+      setTimeout(() => speakSegment(currentIdx, script), 80);
+    }
   }
 
   function reset() { handleClose(); setMode('setup'); setScript([]); setGenerationText(''); setGenError(''); }
@@ -482,6 +498,19 @@ export default function BookmarkPodcast({ bookmarks, ttsConfig, onSetTtsConfig, 
               <div key={i} className="podcast-v2-bar"/>
             ))}
           </div>
+        </div>
+
+        {/* Speed control */}
+        <div className="podcast-speed-bar">
+          {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(s => (
+            <button
+              key={s}
+              className={`podcast-speed-btn ${speed === s ? 'active' : ''}`}
+              onClick={() => changeSpeed(s)}
+            >
+              {s}×
+            </button>
+          ))}
         </div>
 
         {/* Transport controls */}

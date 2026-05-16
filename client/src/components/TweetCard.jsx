@@ -9,15 +9,6 @@ const CAT_CLASS = {
   productivity:'cat-productivity', health:'cat-health',
 };
 
-const LABEL_COLORS = [
-  { id: 'red',    hex: '#ef4444' },
-  { id: 'orange', hex: '#f97316' },
-  { id: 'yellow', hex: '#eab308' },
-  { id: 'green',  hex: '#22c55e' },
-  { id: 'blue',   hex: '#3b82f6' },
-  { id: 'purple', hex: '#a855f7' },
-  { id: 'pink',   hex: '#ec4899' },
-];
 
 function getCatClass(cat) {
   if (!cat || cat === 'unclassified') return 'cat-unclassified';
@@ -82,16 +73,14 @@ function formatAdded(s) {
 
 export default function TweetCard({
   bookmark: b, searchQuery, isRead, favFolder, favFolders,
-  colorLabel, note, isFocused,
-  onToggleRead, onToggleFav, onUpdateLabel, onUpdateNote, onSpeakBookmark,
+  note, isFocused,
+  onToggleRead, onToggleFav, onUpdateNote, onSpeakBookmark,
 }) {
   const [showFavPopup, setShowFavPopup]     = useState(false);
-  const [showLabelPopup, setShowLabelPopup] = useState(false);
   const [showNotePopup, setShowNotePopup]   = useState(false);
   const [newFolder, setNewFolder]           = useState('');
   const [noteText, setNoteText]             = useState(note || '');
   const favPopupRef   = useRef(null);
-  const labelPopupRef = useRef(null);
   const notePopupRef  = useRef(null);
   const favInputRef   = useRef(null);
   const noteInputRef  = useRef(null);
@@ -107,13 +96,6 @@ export default function TweetCard({
   }, [showFavPopup]);
 
   useEffect(() => {
-    if (!showLabelPopup) return;
-    const close = (e) => { if (!labelPopupRef.current?.contains(e.target)) setShowLabelPopup(false); };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [showLabelPopup]);
-
-  useEffect(() => {
     if (!showNotePopup) return;
     setTimeout(() => noteInputRef.current?.focus(), 50);
     const close = (e) => { if (!notePopupRef.current?.contains(e.target)) setShowNotePopup(false); };
@@ -125,7 +107,6 @@ export default function TweetCard({
   const name = b.authorName || handle;
   const cats = b.categories?.length ? b.categories : (b.primaryCategory && b.primaryCategory !== 'unclassified' ? [b.primaryCategory] : []);
   const addedDate = formatAdded(b.bookmarkedAt || b.syncedAt);
-  const labelColor = LABEL_COLORS.find(l => l.id === colorLabel);
   const qt = b.quotedTweet;
   const hasQuote = qt && qt.text && !isOnlyLink(qt.text);
 
@@ -139,16 +120,6 @@ export default function TweetCard({
     setShowFavPopup(false);
     setNewFolder('');
     onToggleFav(b.id, folder || null);
-  }
-
-  function handleLabelClick(e) {
-    e.stopPropagation();
-    setShowLabelPopup(p => !p);
-  }
-
-  function selectLabel(colorId) {
-    setShowLabelPopup(false);
-    onUpdateLabel(b.id, colorLabel === colorId ? null : colorId);
   }
 
   function handleNoteClick(e) {
@@ -165,7 +136,6 @@ export default function TweetCard({
     <div
       className={`tweet-card${isRead ? ' is-read' : ''}${isFocused ? ' is-focused' : ''}`}
       data-id={b.id}
-      style={labelColor ? { borderLeft: `3px solid ${labelColor.hex}` } : {}}
     >
       <a
         className="tweet-avatar"
@@ -231,41 +201,6 @@ export default function TweetCard({
                       </button>
                     )}
                     <button className="note-popup-save" onClick={saveNote}>Save</button>
-                  </div>
-                </div>
-              )}
-            </button>
-
-            {/* Label button */}
-            <button
-              className={`tw-btn label-btn${colorLabel ? ' active' : ''}`}
-              title="Color label"
-              onClick={handleLabelClick}
-              style={{ position: 'relative' }}
-            >
-              <svg viewBox="0 0 24 24" fill={labelColor ? labelColor.hex : 'none'} stroke={labelColor ? labelColor.hex : 'currentColor'} strokeWidth="1.8">
-                <path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z"/>
-              </svg>
-              {showLabelPopup && (
-                <div className="label-popup" ref={labelPopupRef} onClick={e => e.stopPropagation()}>
-                  <div className="label-popup-title">Color label</div>
-                  <div className="label-color-grid">
-                    {LABEL_COLORS.map(l => (
-                      <button
-                        key={l.id}
-                        className={`label-color-dot ${colorLabel === l.id ? 'active' : ''}`}
-                        style={{ background: l.hex }}
-                        title={cap(l.id)}
-                        onClick={() => selectLabel(l.id)}
-                      >
-                        {colorLabel === l.id && (
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-                        )}
-                      </button>
-                    ))}
-                    {colorLabel && (
-                      <button className="label-color-clear" onClick={() => selectLabel(colorLabel)} title="Clear label">✕</button>
-                    )}
                   </div>
                 </div>
               )}

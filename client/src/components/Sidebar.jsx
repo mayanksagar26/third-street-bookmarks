@@ -9,15 +9,6 @@ const CAT_DOT_COLORS = {
   productivity:'#fbbf24', health:'#fb923c',
 };
 
-const LABEL_COLORS = [
-  { id: 'red',    hex: '#ef4444', label: 'Red' },
-  { id: 'orange', hex: '#f97316', label: 'Orange' },
-  { id: 'yellow', hex: '#eab308', label: 'Yellow' },
-  { id: 'green',  hex: '#22c55e', label: 'Green' },
-  { id: 'blue',   hex: '#3b82f6', label: 'Blue' },
-  { id: 'purple', hex: '#a855f7', label: 'Purple' },
-  { id: 'pink',   hex: '#ec4899', label: 'Pink' },
-];
 
 function getDotColor(cat) {
   return CAT_DOT_COLORS[cat.toLowerCase()] || '#71767b';
@@ -30,17 +21,13 @@ export default function Sidebar({
   currentFilter, onFilterChange,
   showUnreadOnly, onToggleUnread,
   catCounts, selectedCategories, onToggleCategory, onClearCategories,
-  favMap, favFolders, folderCounts, labelsMap,
+  favMap, favFolders, folderCounts,
 }) {
   const [catSearch, setCatSearch] = useState('');
 
   const favTotal = Object.keys(favMap).length;
   const favCounts = {};
   Object.values(favMap).forEach(f => { favCounts[f] = (favCounts[f] || 0) + 1; });
-
-  const labelCounts = {};
-  Object.values(labelsMap).forEach(l => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-  const hasLabels = Object.keys(labelCounts).length > 0;
 
   const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
   const q = catSearch.trim().toLowerCase();
@@ -142,26 +129,6 @@ export default function Sidebar({
                 {folder}
               </span>
               <span className="fav-badge">{count}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Labels */}
-      {hasLabels && (
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">Labels</div>
-          {LABEL_COLORS.filter(l => labelCounts[l.id]).map(l => (
-            <div
-              key={l.id}
-              className={`sidebar-item ${currentFilter === `label:${l.id}` ? 'active' : ''}`}
-              onClick={() => onFilterChange(`label:${l.id}`)}
-            >
-              <span className="sidebar-item-left">
-                <span className="sidebar-dot" style={{ background: l.hex }} />
-                {l.label}
-              </span>
-              <span className="sidebar-badge">{labelCounts[l.id]}</span>
             </div>
           ))}
         </div>

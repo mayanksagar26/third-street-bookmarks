@@ -53,7 +53,6 @@ export default function App() {
   const [searchQuery, setSearchQuery]           = useState('');
   const [readIds, setReadIds]                   = useState(new Set());
   const [favMap, setFavMap]                     = useState({});
-  const [labelsMap, setLabelsMap]               = useState({});
   const [notesMap, setNotesMap]                 = useState({});
   const [currentVoice, setCurrentVoice]         = useState(null);
   const [showUnreadOnly, setShowUnreadOnly]     = useState(true);
@@ -77,14 +76,12 @@ export default function App() {
       .then(data => {
         setAllBookmarks(data);
         setReadIds(new Set(data.filter(b => b.isRead).map(b => b.id)));
-        const fav = {}, labels = {}, notes = {};
+        const fav = {}, notes = {};
         data.forEach(b => {
           if (b.favFolder) fav[b.id] = b.favFolder;
-          if (b.colorLabel) labels[b.id] = b.colorLabel;
           if (b.note) notes[b.id] = b.note;
         });
         setFavMap(fav);
-        setLabelsMap(labels);
         setNotesMap(notes);
         setLoading(false);
       })
@@ -195,9 +192,6 @@ export default function App() {
       } else if (currentFilter.startsWith('fav:')) {
         const folder = currentFilter.slice(4);
         result = result.filter(b => favMap[b.id] === folder);
-      } else if (currentFilter.startsWith('label:')) {
-        const color = currentFilter.slice(6);
-        result = result.filter(b => labelsMap[b.id] === color);
       }
     }
 
@@ -217,7 +211,7 @@ export default function App() {
     }
 
     return sortBookmarks(result, currentSort);
-  }, [allBookmarks, currentFilter, currentSort, searchQuery, readIds, favMap, labelsMap, notesMap, currentVoice, showUnreadOnly, selectedCategories]);
+  }, [allBookmarks, currentFilter, currentSort, searchQuery, readIds, favMap, notesMap, currentVoice, showUnreadOnly, selectedCategories]);
 
   const unreadCount = useMemo(() => allBookmarks.filter(b => !readIds.has(b.id)).length, [allBookmarks, readIds]);
   const favFolders  = useMemo(() => [...new Set(Object.values(favMap))].sort(), [favMap]);
@@ -273,20 +267,6 @@ export default function App() {
     } catch {}
   }, []);
 
-  const handleUpdateLabel = useCallback(async (id, color) => {
-    try {
-      await fetch(`/api/label/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ color }),
-      });
-      setLabelsMap(prev => {
-        const next = { ...prev };
-        color ? (next[id] = color) : delete next[id];
-        return next;
-      });
-    } catch {}
-  }, []);
 
   const handleUpdateNote = useCallback(async (id, note) => {
     try {
@@ -485,7 +465,6 @@ export default function App() {
         favMap={favMap}
         favFolders={favFolders}
         folderCounts={folderCounts}
-        labelsMap={labelsMap}
       />
       <main className="main">
         {activeMode === 'chat' ? (
@@ -520,12 +499,10 @@ export default function App() {
               readIds={readIds}
               favMap={favMap}
               favFolders={favFolders}
-              labelsMap={labelsMap}
               notesMap={notesMap}
               focusedIdx={focusedIdx}
               onToggleRead={handleToggleRead}
               onToggleFav={handleToggleFav}
-              onUpdateLabel={handleUpdateLabel}
               onUpdateNote={handleUpdateNote}
               onBulkRead={handleBulkRead}
               onPageChange={(p) => { setCurrentPage(p); setFocusedIdx(-1); }}

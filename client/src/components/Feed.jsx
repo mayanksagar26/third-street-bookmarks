@@ -5,8 +5,8 @@ import Pagination from './Pagination';
 export default function Feed({
   bookmarks, page, pageSize, loading, error,
   searchQuery, readIds, favMap, favFolders,
-  labelsMap, notesMap, focusedIdx,
-  onToggleRead, onToggleFav, onUpdateLabel, onUpdateNote,
+  notesMap, focusedIdx,
+  onToggleRead, onToggleFav, onUpdateNote,
   onBulkRead, onPageChange, ttsConfig, onSpeakBookmark,
 }) {
   const start = (page - 1) * pageSize;
@@ -69,12 +69,10 @@ export default function Feed({
             isRead={readIds.has(b.id)}
             favFolder={favMap[b.id] || null}
             favFolders={favFolders}
-            colorLabel={labelsMap[b.id] || null}
             note={notesMap[b.id] || null}
             isFocused={i === focusedIdx}
             onToggleRead={onToggleRead}
             onToggleFav={onToggleFav}
-            onUpdateLabel={onUpdateLabel}
             onUpdateNote={onUpdateNote}
             onSpeakBookmark={onSpeakBookmark}
           />
