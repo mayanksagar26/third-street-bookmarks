@@ -1,10 +1,11 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
+// Note: syncSettingsOpen uses simple toggle — no outside-click needed since it's inline
 
 const TOOLS = [
   {
     id: 'chat',
     label: 'Chat with Bookmarks',
-    desc: 'Ask questions about your collection',
+    desc: 'Ask questions using AI',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
         <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
@@ -33,8 +34,15 @@ const TOOLS = [
   },
 ];
 
-export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, syncState, onSync, activeMode, setActiveMode }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+export default function RightPanel({
+  bookmarks, currentVoice, onVoiceClick,
+  syncState, onSync,
+  activeMode, setActiveMode,
+  aiBackend, onSetAiBackend,
+  classifyBackend, onSetClassifyBackend,
+}) {
+  const [menuOpen, setMenuOpen]               = useState(false);
+  const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
   const menuRef = useRef(null);
 
   useEffect(() => {
@@ -63,8 +71,8 @@ export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, sync
       {/* Profile / Tools */}
       <div className="panel-card profile-card" ref={menuRef}>
         <button className="profile-btn" onClick={() => setMenuOpen(p => !p)}>
-          <div className="profile-avatar">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+          <div className="profile-avatar" style={{background:'transparent',border:'none',padding:0,overflow:'hidden',borderRadius:'50%',width:32,height:32,flexShrink:0}}>
+            <img src="/tj.png" alt="TJ" style={{width:'100%',height:'100%',objectFit:'cover',borderRadius:'50%'}}/>
           </div>
           <span className="profile-btn-label">Profile</span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 'auto', color: 'var(--text-tertiary)', transform: menuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
@@ -117,9 +125,41 @@ export default function RightPanel({ bookmarks, currentVoice, onVoiceClick, sync
         </div>
       </div>
 
-      {/* Sync */}
+      {/* Sync & Classify */}
       <div className="panel-card">
-        <div className="panel-card-title">Sync &amp; Classify</div>
+        <div className="panel-card-title">
+          Sync &amp; Classify
+          <button
+            className={`sync-settings-gear ${syncSettingsOpen ? 'open' : ''}`}
+            onClick={() => setSyncSettingsOpen(p => !p)}
+            title="Classify engine settings"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Inline classify engine picker — expands when gear is open */}
+        {syncSettingsOpen && (
+          <div className="sync-backend-list" style={{ marginBottom: 12 }}>
+            {[
+              { id: 'python', label: '🐍 Python', hint: 'regex + optional OpenAI key' },
+              { id: 'claude', label: '⚡ Claude Code CLI', hint: 'local claude -p' },
+              { id: 'codex',  label: '🤖 Codex CLI',      hint: 'local codex --full-auto' },
+            ].map(b => (
+              <button
+                key={b.id}
+                className={`sync-backend-item ${classifyBackend === b.id ? 'active' : ''}`}
+                onClick={() => onSetClassifyBackend(b.id)}
+              >
+                <span>{b.label}</span>
+                <span className="sync-backend-hint">{b.hint}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <button className={btnClass} onClick={onSync}>
           <svg viewBox="0 0 24 24" fill="currentColor" className={syncState.status === 'running' ? 'spin' : ''}>
             <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>

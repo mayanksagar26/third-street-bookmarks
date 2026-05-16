@@ -9,6 +9,16 @@ const CAT_DOT_COLORS = {
   productivity:'#fbbf24', health:'#fb923c',
 };
 
+const LABEL_COLORS = [
+  { id: 'red',    hex: '#ef4444', label: 'Red' },
+  { id: 'orange', hex: '#f97316', label: 'Orange' },
+  { id: 'yellow', hex: '#eab308', label: 'Yellow' },
+  { id: 'green',  hex: '#22c55e', label: 'Green' },
+  { id: 'blue',   hex: '#3b82f6', label: 'Blue' },
+  { id: 'purple', hex: '#a855f7', label: 'Purple' },
+  { id: 'pink',   hex: '#ec4899', label: 'Pink' },
+];
+
 function getDotColor(cat) {
   return CAT_DOT_COLORS[cat.toLowerCase()] || '#71767b';
 }
@@ -16,16 +26,21 @@ function getDotColor(cat) {
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 
 export default function Sidebar({
-  total, unreadCount, currentFilter, onFilterChange,
+  total, unreadCount, gemsCount,
+  currentFilter, onFilterChange,
   showUnreadOnly, onToggleUnread,
   catCounts, selectedCategories, onToggleCategory, onClearCategories,
-  favMap, favFolders, folderCounts,
+  favMap, favFolders, folderCounts, labelsMap,
 }) {
   const [catSearch, setCatSearch] = useState('');
 
   const favTotal = Object.keys(favMap).length;
   const favCounts = {};
   Object.values(favMap).forEach(f => { favCounts[f] = (favCounts[f] || 0) + 1; });
+
+  const labelCounts = {};
+  Object.values(labelsMap).forEach(l => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+  const hasLabels = Object.keys(labelCounts).length > 0;
 
   const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
   const q = catSearch.trim().toLowerCase();
@@ -40,7 +55,19 @@ export default function Sidebar({
         <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
           <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
         </svg>
-        <span className="sidebar-logo-text">Third Street<br/>Bookmarks</span>
+        <div className="sidebar-logo-block">
+          <span className="sidebar-logo-text">TSB</span>
+          <span className="sidebar-logo-sub">
+            Powered by{' '}
+            <a href="https://github.com/afar1/fieldtheory-cli" target="_blank" rel="noopener noreferrer" className="sidebar-logo-link">
+              Field Theory CLI
+            </a>
+            {' '}by{' '}
+            <a href="https://x.com/andrewfarah" target="_blank" rel="noopener noreferrer" className="sidebar-logo-link">
+              @andrewfarah
+            </a>
+          </span>
+        </div>
       </div>
 
       {/* Filter */}
@@ -58,6 +85,7 @@ export default function Sidebar({
           </span>
           <span className="sidebar-badge">{total}</span>
         </div>
+
         <div
           className={`sidebar-item ${showUnreadOnly ? 'active' : ''}`}
           onClick={onToggleUnread}
@@ -69,6 +97,19 @@ export default function Sidebar({
             Unread Only
           </span>
           <span className="sidebar-badge">{unreadCount}</span>
+        </div>
+
+        <div
+          className={`sidebar-item ${currentFilter === 'gems' ? 'active' : ''}`}
+          onClick={() => onFilterChange('gems')}
+        >
+          <span className="sidebar-item-left">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4l5 2.18V11c0 3.5-2.33 6.79-5 7.93C9.33 17.79 7 14.5 7 11V7.18L12 5z"/>
+            </svg>
+            Forgotten Gems
+          </span>
+          <span className="sidebar-badge gems-badge">{gemsCount}</span>
         </div>
       </div>
 
@@ -101,6 +142,26 @@ export default function Sidebar({
                 {folder}
               </span>
               <span className="fav-badge">{count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Labels */}
+      {hasLabels && (
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">Labels</div>
+          {LABEL_COLORS.filter(l => labelCounts[l.id]).map(l => (
+            <div
+              key={l.id}
+              className={`sidebar-item ${currentFilter === `label:${l.id}` ? 'active' : ''}`}
+              onClick={() => onFilterChange(`label:${l.id}`)}
+            >
+              <span className="sidebar-item-left">
+                <span className="sidebar-dot" style={{ background: l.hex }} />
+                {l.label}
+              </span>
+              <span className="sidebar-badge">{labelCounts[l.id]}</span>
             </div>
           ))}
         </div>
@@ -178,6 +239,14 @@ export default function Sidebar({
       )}
 
       <div style={{ flex: 1 }} />
+
+      {/* Keyboard shortcuts hint */}
+      <div className="sidebar-shortcuts">
+        <span><kbd>j</kbd><kbd>k</kbd> navigate</span>
+        <span><kbd>r</kbd> read</span>
+        <span><kbd>f</kbd> fav</span>
+        <span><kbd>/</kbd> search</span>
+      </div>
     </nav>
   );
 }

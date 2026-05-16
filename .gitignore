@@ -1,5 +1,6 @@
 # Personal data — never commit
 bookmarks.json
+settings.json
 
 # Dependencies
 node_modules/

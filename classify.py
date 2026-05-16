@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -88,6 +89,33 @@ Rules:
 - No explanations, no extra text."""
 
 
+def classify_cli(tweets: list[dict], backend: str) -> list[str]:
+    """Classify using local claude or codex CLI."""
+    extra_path = '/usr/local/bin:/opt/homebrew/bin:' + str(Path.home() / '.local/bin') + ':' + str(Path.home() / '.npm-global/bin')
+    env = {**os.environ, 'PATH': os.environ.get('PATH', '') + ':' + extra_path}
+
+    lines = "\n".join(f"{i+1}. {t['text'][:300]}" for i, t in enumerate(tweets))
+    prompt = f"""{SYSTEM_PROMPT}
+
+Tweets:
+{lines}"""
+
+    if backend == 'codex':
+        cmd = ['codex', '--full-auto', '-q', prompt]
+    else:
+        cmd = ['claude', '-p', prompt]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
+        raw = result.stdout.strip()
+        raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+        cats = json.loads(raw)
+        return [c if c in CATEGORIES else 'misc' for c in cats]
+    except Exception as e:
+        print(f"  CLI classify failed ({e}), falling back to regex", flush=True)
+        return [classify_regex(t['text']) for t in tweets]
+
+
 def classify_openai(tweets: list[dict]) -> list[str]:
     import openai  # already installed
 
@@ -133,8 +161,22 @@ def save_category(conn: sqlite3.Connection, tweet_id: str, category: str):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    use_llm = bool(os.environ.get("OPENAI_API_KEY"))
-    mode = "openai/gpt-4o-mini" if use_llm else "regex (offline)"
+    # Backend selection: --backend=claude|codex|openai|regex
+    backend = 'regex'
+    for arg in sys.argv[1:]:
+        if arg.startswith('--backend='):
+            backend = arg.split('=', 1)[1]
+
+    if backend == 'regex':
+        if os.environ.get("OPENAI_API_KEY"):
+            backend = 'openai'
+        elif os.environ.get("USE_CLAUDE_CLI"):
+            backend = 'claude'
+        elif os.environ.get("USE_CODEX_CLI"):
+            backend = 'codex'
+
+    use_llm = backend in ('openai', 'claude', 'codex')
+    mode = {'openai': 'openai/gpt-4o-mini', 'claude': 'claude CLI', 'codex': 'codex CLI'}.get(backend, 'regex (offline)')
 
     conn = sqlite3.connect(str(DB_PATH))
     tweets = fetch_unclassified(conn)
@@ -152,8 +194,10 @@ def main():
     for i in range(0, len(tweets), batch_size):
         batch = tweets[i : i + batch_size]
         try:
-            if use_llm:
+            if backend == 'openai':
                 categories = classify_openai(batch)
+            elif backend in ('claude', 'codex'):
+                categories = classify_cli(batch, backend)
             else:
                 categories = [classify_regex(t["text"]) for t in batch]
         except Exception as e:

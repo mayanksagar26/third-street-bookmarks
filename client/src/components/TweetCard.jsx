@@ -9,6 +9,16 @@ const CAT_CLASS = {
   productivity:'cat-productivity', health:'cat-health',
 };
 
+const LABEL_COLORS = [
+  { id: 'red',    hex: '#ef4444' },
+  { id: 'orange', hex: '#f97316' },
+  { id: 'yellow', hex: '#eab308' },
+  { id: 'green',  hex: '#22c55e' },
+  { id: 'blue',   hex: '#3b82f6' },
+  { id: 'purple', hex: '#a855f7' },
+  { id: 'pink',   hex: '#ec4899' },
+];
+
 function getCatClass(cat) {
   if (!cat || cat === 'unclassified') return 'cat-unclassified';
   return CAT_CLASS[cat.toLowerCase().replace(/[^a-z ]/g, '').trim()] || 'cat-other';
@@ -17,18 +27,26 @@ function getCatClass(cat) {
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 function fmt(n) { return Number(n || 0).toLocaleString(); }
 
+function readingTime(text) {
+  const words = (text || '').trim().split(/\s+/).length;
+  const mins = Math.ceil(words / 200);
+  return mins <= 1 ? '1 min' : `${mins} min`;
+}
+
+function isOnlyLink(text) {
+  return /^https?:\/\/\S+$/.test((text || '').trim());
+}
+
 function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function getProcessedText(text, searchQuery) {
   let t = esc(text || '');
-  // linkify
   t = t.replace(/(https?:\/\/[^\s<>"]+|(?:www\.|[a-z0-9-]+\.(?:com|io|ai|dev|org|net|co|app|sh|gg|xyz|me|to|be))[^\s<>"]*)/gi, url => {
     const href = url.startsWith('http') ? url : 'https://' + url;
     return `<a href="${href}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:var(--accent);text-decoration:none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${url}</a>`;
   });
-  // highlight search
   if (searchQuery && searchQuery.length >= 2) {
     try {
       const re = new RegExp(`(${searchQuery.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi');
@@ -62,41 +80,93 @@ function formatAdded(s) {
   } catch { return ''; }
 }
 
-export default function TweetCard({ bookmark: b, searchQuery, isRead, favFolder, favFolders, onToggleRead, onToggleFav }) {
-  const [showPopup, setShowPopup] = useState(false);
-  const [newFolder, setNewFolder] = useState('');
-  const popupRef = useRef(null);
-  const inputRef = useRef(null);
+export default function TweetCard({
+  bookmark: b, searchQuery, isRead, favFolder, favFolders,
+  colorLabel, note, isFocused,
+  onToggleRead, onToggleFav, onUpdateLabel, onUpdateNote, onSpeakBookmark,
+}) {
+  const [showFavPopup, setShowFavPopup]     = useState(false);
+  const [showLabelPopup, setShowLabelPopup] = useState(false);
+  const [showNotePopup, setShowNotePopup]   = useState(false);
+  const [newFolder, setNewFolder]           = useState('');
+  const [noteText, setNoteText]             = useState(note || '');
+  const favPopupRef   = useRef(null);
+  const labelPopupRef = useRef(null);
+  const notePopupRef  = useRef(null);
+  const favInputRef   = useRef(null);
+  const noteInputRef  = useRef(null);
+
+  useEffect(() => { setNoteText(note || ''); }, [note]);
 
   useEffect(() => {
-    if (!showPopup) return;
-    setTimeout(() => inputRef.current?.focus(), 50);
-    const close = (e) => {
-      if (!popupRef.current?.contains(e.target)) setShowPopup(false);
-    };
+    if (!showFavPopup) return;
+    setTimeout(() => favInputRef.current?.focus(), 50);
+    const close = (e) => { if (!favPopupRef.current?.contains(e.target)) setShowFavPopup(false); };
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
-  }, [showPopup]);
+  }, [showFavPopup]);
+
+  useEffect(() => {
+    if (!showLabelPopup) return;
+    const close = (e) => { if (!labelPopupRef.current?.contains(e.target)) setShowLabelPopup(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [showLabelPopup]);
+
+  useEffect(() => {
+    if (!showNotePopup) return;
+    setTimeout(() => noteInputRef.current?.focus(), 50);
+    const close = (e) => { if (!notePopupRef.current?.contains(e.target)) setShowNotePopup(false); };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [showNotePopup]);
 
   const handle = b.authorHandle || '';
   const name = b.authorName || handle;
   const cats = b.categories?.length ? b.categories : (b.primaryCategory && b.primaryCategory !== 'unclassified' ? [b.primaryCategory] : []);
   const addedDate = formatAdded(b.bookmarkedAt || b.syncedAt);
+  const labelColor = LABEL_COLORS.find(l => l.id === colorLabel);
+  const qt = b.quotedTweet;
+  const hasQuote = qt && qt.text && !isOnlyLink(qt.text);
 
   function handleStarClick(e) {
     e.stopPropagation();
     if (favFolder) { onToggleFav(b.id, null); return; }
-    setShowPopup(p => !p);
+    setShowFavPopup(p => !p);
   }
 
   function saveFolder(folder) {
-    setShowPopup(false);
+    setShowFavPopup(false);
     setNewFolder('');
     onToggleFav(b.id, folder || null);
   }
 
+  function handleLabelClick(e) {
+    e.stopPropagation();
+    setShowLabelPopup(p => !p);
+  }
+
+  function selectLabel(colorId) {
+    setShowLabelPopup(false);
+    onUpdateLabel(b.id, colorLabel === colorId ? null : colorId);
+  }
+
+  function handleNoteClick(e) {
+    e.stopPropagation();
+    setShowNotePopup(p => !p);
+  }
+
+  function saveNote() {
+    setShowNotePopup(false);
+    onUpdateNote(b.id, noteText.trim() || null);
+  }
+
   return (
-    <div className={`tweet-card${isRead ? ' is-read' : ''}`} data-id={b.id}>
+    <div
+      className={`tweet-card${isRead ? ' is-read' : ''}${isFocused ? ' is-focused' : ''}`}
+      data-id={b.id}
+      style={labelColor ? { borderLeft: `3px solid ${labelColor.hex}` } : {}}
+    >
       <a
         className="tweet-avatar"
         href={`https://x.com/${handle}`}
@@ -121,6 +191,86 @@ export default function TweetCard({ bookmark: b, searchQuery, isRead, favFolder,
           <span className="tweet-date">{formatDate(b.postedAt)}</span>
 
           <div className="tweet-card-actions">
+            {/* Speak button */}
+            {onSpeakBookmark && (
+              <button
+                className="tw-btn speak-btn"
+                title="Listen to this bookmark"
+                onClick={e => { e.stopPropagation(); onSpeakBookmark(b); }}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+              </button>
+            )}
+
+            {/* Note button */}
+            <button
+              className={`tw-btn note-btn${note ? ' active' : ''}`}
+              title={note ? 'Edit note' : 'Add note'}
+              onClick={handleNoteClick}
+              style={{ position: 'relative' }}
+            >
+              <svg viewBox="0 0 24 24" fill={note ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={note ? '0' : '1.8'}>
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+              </svg>
+              {showNotePopup && (
+                <div className="note-popup" ref={notePopupRef} onClick={e => e.stopPropagation()}>
+                  <div className="note-popup-title">Note</div>
+                  <textarea
+                    ref={noteInputRef}
+                    className="note-popup-textarea"
+                    placeholder="Add a note…"
+                    value={noteText}
+                    onChange={e => setNoteText(e.target.value)}
+                    rows={3}
+                    onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveNote(); }}
+                  />
+                  <div className="note-popup-actions">
+                    {note && (
+                      <button className="note-popup-delete" onClick={() => { setNoteText(''); setShowNotePopup(false); onUpdateNote(b.id, null); }}>
+                        Delete
+                      </button>
+                    )}
+                    <button className="note-popup-save" onClick={saveNote}>Save</button>
+                  </div>
+                </div>
+              )}
+            </button>
+
+            {/* Label button */}
+            <button
+              className={`tw-btn label-btn${colorLabel ? ' active' : ''}`}
+              title="Color label"
+              onClick={handleLabelClick}
+              style={{ position: 'relative' }}
+            >
+              <svg viewBox="0 0 24 24" fill={labelColor ? labelColor.hex : 'none'} stroke={labelColor ? labelColor.hex : 'currentColor'} strokeWidth="1.8">
+                <path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z"/>
+              </svg>
+              {showLabelPopup && (
+                <div className="label-popup" ref={labelPopupRef} onClick={e => e.stopPropagation()}>
+                  <div className="label-popup-title">Color label</div>
+                  <div className="label-color-grid">
+                    {LABEL_COLORS.map(l => (
+                      <button
+                        key={l.id}
+                        className={`label-color-dot ${colorLabel === l.id ? 'active' : ''}`}
+                        style={{ background: l.hex }}
+                        title={cap(l.id)}
+                        onClick={() => selectLabel(l.id)}
+                      >
+                        {colorLabel === l.id && (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                        )}
+                      </button>
+                    ))}
+                    {colorLabel && (
+                      <button className="label-color-clear" onClick={() => selectLabel(colorLabel)} title="Clear label">✕</button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </button>
+
             {/* Read button */}
             <button
               className={`tw-btn read-btn${isRead ? ' active' : ''}`}
@@ -144,9 +294,8 @@ export default function TweetCard({ bookmark: b, searchQuery, isRead, favFolder,
                 ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                 : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
               }
-
-              {showPopup && (
-                <div className="fav-popup" ref={popupRef} onClick={e => e.stopPropagation()}>
+              {showFavPopup && (
+                <div className="fav-popup" ref={favPopupRef} onClick={e => e.stopPropagation()}>
                   <div className="fav-popup-title">Save in</div>
                   {favFolders.map(f => (
                     <div key={f} className="fav-popup-folder" onClick={() => saveFolder(f)}>
@@ -158,7 +307,7 @@ export default function TweetCard({ bookmark: b, searchQuery, isRead, favFolder,
                   ))}
                   {favFolders.length > 0 && <div className="fav-popup-divider" />}
                   <input
-                    ref={inputRef}
+                    ref={favInputRef}
                     className="fav-popup-input"
                     placeholder="New folder…"
                     value={newFolder}
@@ -180,6 +329,38 @@ export default function TweetCard({ bookmark: b, searchQuery, isRead, favFolder,
           dangerouslySetInnerHTML={{ __html: getProcessedText(b.text, searchQuery) }}
         />
 
+        {/* Quoted tweet */}
+        {hasQuote && (
+          <a
+            className="quoted-tweet"
+            href={qt.url || `https://x.com/${qt.authorHandle}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="quoted-tweet-header">
+              {qt.authorProfileImageUrl && (
+                <img className="quoted-tweet-avatar" src={qt.authorProfileImageUrl} alt="" loading="lazy" onError={e => e.target.style.display='none'} />
+              )}
+              <span className="quoted-tweet-name">{qt.authorName || qt.authorHandle}</span>
+              <span className="quoted-tweet-handle">@{qt.authorHandle}</span>
+            </div>
+            <div className="quoted-tweet-text">
+              {(qt.text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim()}
+            </div>
+          </a>
+        )}
+
+        {/* Note display */}
+        {note && (
+          <div className="tweet-note" onClick={handleNoteClick}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0, opacity: 0.6 }}>
+              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+            {note}
+          </div>
+        )}
+
         {cats.length > 0 && (
           <div className="tweet-categories">
             {cats.slice(0, 4).map(c => (
@@ -188,7 +369,10 @@ export default function TweetCard({ bookmark: b, searchQuery, isRead, favFolder,
           </div>
         )}
 
-        {addedDate && <div className="tweet-meta">Added {addedDate}</div>}
+        <div className="tweet-meta-row">
+          {addedDate && <span>Added {addedDate}</span>}
+          <span className="tweet-read-time">{readingTime(b.text)} read</span>
+        </div>
 
         <div className="tweet-actions">
           <span className="tweet-action">
