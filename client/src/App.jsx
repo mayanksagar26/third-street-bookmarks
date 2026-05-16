@@ -333,47 +333,27 @@ export default function App() {
     saveTtsConfig(cfg);
   }, []);
 
-  // TTS voice playback using ElevenLabs or Sarvam
+  // TTS voice playback — proxied through local server to avoid CORS
   const handleTtsSpeak = useCallback(async (text) => {
     if (!ttsConfig || !text) return;
     try {
-      if (ttsConfig.provider === 'elevenlabs') {
-        const voiceId = ttsConfig.voice || '21m00Tcm4TlvDq8ikWAM';
-        const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-          method: 'POST',
-          headers: { 'xi-api-key': ttsConfig.key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, model_id: 'eleven_monolingual_v1', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
-        });
-        if (!resp.ok) throw new Error(`ElevenLabs error ${resp.status}`);
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
-        audioRef.current = new Audio(url);
-        audioRef.current.play();
-        return audioRef.current;
-      } else if (ttsConfig.provider === 'sarvam') {
-        const resp = await fetch('https://api.sarvam.ai/text-to-speech', {
-          method: 'POST',
-          headers: { 'api-subscription-key': ttsConfig.key, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inputs: [text.slice(0, 500)], target_language_code: 'en-IN', speaker: ttsConfig.voice || 'meera', enable_preprocessing: true }),
-        });
-        if (!resp.ok) throw new Error(`Sarvam error ${resp.status}`);
-        const d = await resp.json();
-        const b64 = d.audios?.[0];
-        if (!b64) throw new Error('No audio returned');
-        const binary = atob(b64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'audio/wav' });
-        const url = URL.createObjectURL(blob);
-        if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
-        audioRef.current = new Audio(url);
-        audioRef.current.play();
-        return audioRef.current;
+      const resp = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: ttsConfig.provider, text, key: ttsConfig.key, voiceId: ttsConfig.voice }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `TTS error ${resp.status}`);
       }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; }
+      audioRef.current = new Audio(url);
+      audioRef.current.play();
+      return audioRef.current;
     } catch (e) {
       console.error('TTS error:', e);
-      // Fallback to browser TTS
       const utter = new SpeechSynthesisUtterance(text);
       window.speechSynthesis.speak(utter);
     }

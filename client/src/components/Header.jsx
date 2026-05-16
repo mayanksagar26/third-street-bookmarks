@@ -1,14 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 
-const ELEVENLABS_VOICES = [
-  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel' },
-  { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi' },
-  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella' },
-  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni' },
-  { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli' },
-  { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh' },
-];
-
 const SARVAM_VOICES = [
   { id: 'meera', name: 'Meera (Female)' },
   { id: 'pavithra', name: 'Pavithra (Female)' },
@@ -25,12 +16,38 @@ export default function Header({
   ttsConfig, voicePlaying, showVoiceSetup,
   onVoiceToggle, onShowVoiceSetup, onSetTtsConfig, onCloseVoiceSetup,
 }) {
-  const [input, setInput] = useState('');
-  const [provider, setProvider] = useState(ttsConfig?.provider || '');
-  const [key, setKey] = useState('');
-  const [voice, setVoice] = useState('');
-  const [testing, setTesting] = useState(false);
-  const setupRef = useRef(null);
+  const [input, setInput]         = useState('');
+  const [provider, setProvider]   = useState(ttsConfig?.provider || '');
+  const [key, setKey]             = useState('');
+  const [voice, setVoice]         = useState('');
+  const [testing, setTesting]     = useState(false);
+  const [fetchingVoices, setFetchingVoices] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState([]);
+  const keyDebounce               = useRef(null);
+  const setupRef                  = useRef(null);
+
+  // Fetch real voices from ElevenLabs when key is entered
+  useEffect(() => {
+    if (provider !== 'elevenlabs' || key.trim().length < 10) {
+      setAvailableVoices([]);
+      return;
+    }
+    clearTimeout(keyDebounce.current);
+    keyDebounce.current = setTimeout(async () => {
+      setFetchingVoices(true);
+      try {
+        const resp = await fetch(`/api/tts/voices?provider=elevenlabs&key=${encodeURIComponent(key.trim())}`);
+        const data = await resp.json();
+        if (data.voices?.length) {
+          setAvailableVoices(data.voices);
+          // Auto-select first if none chosen
+          setVoice(v => v || data.voices[0].id);
+        }
+      } catch {}
+      setFetchingVoices(false);
+    }, 600);
+    return () => clearTimeout(keyDebounce.current);
+  }, [key, provider]);
 
   // Close on outside click
   useEffect(() => {
@@ -49,7 +66,8 @@ export default function Header({
 
   function handleSave() {
     if (!provider || !key.trim()) return;
-    const cfg = { provider, key: key.trim(), voice: voice || (provider === 'elevenlabs' ? ELEVENLABS_VOICES[0].id : SARVAM_VOICES[0].id) };
+    const fallback = provider === 'elevenlabs' ? (availableVoices[0]?.id || '') : SARVAM_VOICES[0].id;
+    const cfg = { provider, key: key.trim(), voice: voice || fallback };
     onSetTtsConfig(cfg);
     onCloseVoiceSetup();
   }
@@ -59,6 +77,7 @@ export default function Header({
     setProvider('');
     setKey('');
     setVoice('');
+    setAvailableVoices([]);
     onCloseVoiceSetup();
   }
 
@@ -66,39 +85,25 @@ export default function Header({
     if (!provider || !key.trim()) return;
     setTesting(true);
     try {
-      const v = voice || (provider === 'elevenlabs' ? ELEVENLABS_VOICES[0].id : SARVAM_VOICES[0].id);
-      if (provider === 'elevenlabs') {
-        const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${v}`, {
-          method: 'POST',
-          headers: { 'xi-api-key': key.trim(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: 'Testing voice. Bookmarks ready.', model_id: 'eleven_monolingual_v1', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
-        });
-        if (!resp.ok) throw new Error(`Error ${resp.status}`);
-        const blob = await resp.blob();
-        new Audio(URL.createObjectURL(blob)).play();
-      } else {
-        const resp = await fetch('https://api.sarvam.ai/text-to-speech', {
-          method: 'POST',
-          headers: { 'api-subscription-key': key.trim(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inputs: ['Testing voice. Bookmarks ready.'], target_language_code: 'en-IN', speaker: v, enable_preprocessing: true }),
-        });
-        if (!resp.ok) throw new Error(`Error ${resp.status}`);
-        const d = await resp.json();
-        const b64 = d.audios?.[0];
-        if (b64) {
-          const binary = atob(b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          new Audio(URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))).play();
-        }
+      const v = voice || (provider === 'elevenlabs' ? availableVoices[0]?.id || '' : SARVAM_VOICES[0].id);
+      const resp = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, text: 'Testing voice. Bookmarks ready.', key: key.trim(), voiceId: v }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${resp.status}`);
       }
+      const blob = await resp.blob();
+      new Audio(URL.createObjectURL(blob)).play();
     } catch (e) {
       alert(`Test failed: ${e.message}`);
     }
     setTesting(false);
   }
 
-  const voices = provider === 'elevenlabs' ? ELEVENLABS_VOICES : provider === 'sarvam' ? SARVAM_VOICES : [];
+  const voices = provider === 'elevenlabs' ? availableVoices : provider === 'sarvam' ? SARVAM_VOICES : [];
 
   return (
     <div className="header" style={{ position: 'relative' }}>
@@ -197,17 +202,28 @@ export default function Header({
                       onChange={e => setKey(e.target.value)}
                       autoFocus
                     />
-                    {voices.length > 0 && (
+                    {provider === 'elevenlabs' && key.trim().length > 10 && (
+                      fetchingVoices
+                        ? <p style={{fontSize:12,color:'var(--text-tertiary)',margin:'6px 0'}}>Fetching your voices…</p>
+                        : voices.length > 0
+                          ? <select className="voice-select" value={voice} onChange={e => setVoice(e.target.value)}>
+                              {voices.map(v => <option key={v.id} value={v.id}>{v.name}{v.category ? ` (${v.category})` : ''}</option>)}
+                            </select>
+                          : <p style={{fontSize:12,color:'var(--text-tertiary)',margin:'6px 0'}}>No voices found — check your key</p>
+                    )}
+                    {provider === 'sarvam' && voices.length > 0 && (
                       <select className="voice-select" value={voice} onChange={e => setVoice(e.target.value)}>
                         <option value="">Default voice</option>
                         {voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                       </select>
                     )}
                     <div className="voice-setup-actions">
-                      <button className="voice-test-btn" onClick={handleTest} disabled={!key.trim() || testing}>
-                        {testing ? 'Testing…' : 'Test'}
+                      <button className="voice-test-btn" onClick={handleTest}
+                        disabled={!key.trim() || testing || (provider === 'elevenlabs' && fetchingVoices)}>
+                        {testing ? 'Testing…' : fetchingVoices ? 'Loading…' : 'Test'}
                       </button>
-                      <button className="voice-save-btn" onClick={handleSave} disabled={!key.trim()}>
+                      <button className="voice-save-btn" onClick={handleSave}
+                        disabled={!key.trim() || (provider === 'elevenlabs' && (fetchingVoices || !availableVoices.length))}>
                         Save & Connect
                       </button>
                     </div>

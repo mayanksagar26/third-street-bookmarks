@@ -215,6 +215,91 @@ app.post('/api/note/:id', (req, res) => {
   }
 });
 
+// ── TTS proxy (avoids browser CORS restrictions) ─────────────────────────────
+app.post('/api/tts', async (req, res) => {
+  const { provider, text, key, voiceId } = req.body;
+  if (!text || !key) return res.status(400).json({ error: 'text and key required' });
+
+  try {
+    if (provider === 'elevenlabs') {
+      const vid = voiceId || '21m00Tcm4TlvDq8ikWAM';
+      const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${vid}`, {
+        method: 'POST',
+        headers: {
+          'xi-api-key': key,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text: text.slice(0, 1000),
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        }),
+      });
+      if (!upstream.ok) {
+        const err = await upstream.text();
+        return res.status(upstream.status).json({ error: err });
+      }
+      res.setHeader('Content-Type', 'audio/mpeg');
+      const buf = await upstream.arrayBuffer();
+      res.send(Buffer.from(buf));
+
+    } else if (provider === 'sarvam') {
+      const upstream = await fetch('https://api.sarvam.ai/text-to-speech', {
+        method: 'POST',
+        headers: { 'api-subscription-key': key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputs: [text.slice(0, 500)],
+          target_language_code: 'en-IN',
+          speaker: voiceId || 'meera',
+          enable_preprocessing: true,
+        }),
+      });
+      if (!upstream.ok) {
+        const err = await upstream.text();
+        return res.status(upstream.status).json({ error: err });
+      }
+      const data = await upstream.json();
+      const b64 = data.audios?.[0];
+      if (!b64) return res.status(500).json({ error: 'No audio returned from Sarvam' });
+      res.setHeader('Content-Type', 'audio/wav');
+      res.send(Buffer.from(b64, 'base64'));
+
+    } else {
+      res.status(400).json({ error: 'Unknown provider' });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Fetch available voices for a TTS provider ────────────────────────────────
+app.get('/api/tts/voices', async (req, res) => {
+  const { provider, key } = req.query;
+  if (!key) return res.status(400).json({ error: 'key required' });
+  try {
+    if (provider === 'elevenlabs') {
+      const upstream = await fetch('https://api.elevenlabs.io/v1/voices', {
+        headers: { 'xi-api-key': key },
+      });
+      if (!upstream.ok) {
+        const err = await upstream.text();
+        return res.status(upstream.status).json({ error: err });
+      }
+      const data = await upstream.json();
+      // Only return voices usable on free tier — exclude library/professional voices
+      const voices = (data.voices || [])
+        .filter(v => v.category !== 'library' && v.category !== 'professional')
+        .map(v => ({ id: v.voice_id, name: v.name, category: v.category }));
+      res.json({ voices });
+    } else {
+      res.json({ voices: [] });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 app.post('/api/chat', (req, res) => {
   const { prompt } = req.body;

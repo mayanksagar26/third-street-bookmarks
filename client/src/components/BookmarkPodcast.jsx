@@ -67,28 +67,18 @@ function parseScript(raw) {
   return raw.split('\n').filter(l => l.trim().length > 20).map(l => ({ text: l.trim(), type: 'segment' }));
 }
 
-async function speakElevenLabs(text, key, voiceId) {
-  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId || '21m00Tcm4TlvDq8ikWAM'}`, {
+// Both providers go through local server proxy to avoid CORS
+async function speakViaTTS(provider, text, key, voiceId) {
+  const resp = await fetch('/api/tts', {
     method: 'POST',
-    headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: text.slice(0, 1000), model_id: 'eleven_monolingual_v1', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, text, key, voiceId }),
   });
-  if (!resp.ok) throw new Error(`ElevenLabs ${resp.status}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `TTS error ${resp.status}`);
+  }
   return new Audio(URL.createObjectURL(await resp.blob()));
-}
-
-async function speakSarvam(text, key, voiceId) {
-  const resp = await fetch('https://api.sarvam.ai/text-to-speech', {
-    method: 'POST',
-    headers: { 'api-subscription-key': key, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inputs: [text.slice(0, 500)], target_language_code: 'en-IN', speaker: voiceId || 'meera', enable_preprocessing: true }),
-  });
-  if (!resp.ok) throw new Error(`Sarvam ${resp.status}`);
-  const d = await resp.json();
-  const b64 = d.audios?.[0];
-  if (!b64) throw new Error('No audio');
-  const bytes = new Uint8Array(atob(b64).split('').map(c => c.charCodeAt(0)));
-  return new Audio(URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' })));
 }
 
 // Multi-select topic dropdown
@@ -323,14 +313,8 @@ export default function BookmarkPodcast({ bookmarks, ttsConfig, onSetTtsConfig, 
     };
 
     try {
-      if (selectedProvider.id === 'elevenlabs' && key) {
-        const audio = await speakElevenLabs(text, key, voice);
-        audioRef.current = audio;
-        audio.playbackRate = speedRef.current;
-        audio.onended = onEnd;
-        audio.play();
-      } else if (selectedProvider.id === 'sarvam' && key) {
-        const audio = await speakSarvam(text, key, voice);
+      if ((selectedProvider.id === 'elevenlabs' || selectedProvider.id === 'sarvam') && key) {
+        const audio = await speakViaTTS(selectedProvider.id, text, key, voice);
         audioRef.current = audio;
         audio.playbackRate = speedRef.current;
         audio.onended = onEnd;
