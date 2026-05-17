@@ -4,7 +4,6 @@ A personal X/Twitter bookmark reader with AI-powered features — built on top o
 
 > **Your bookmarks, locally. Searchable, classifiable, listenable.**
 
-![Third Street Bookmarks UI](screenshot.png)
 
 ---
 
