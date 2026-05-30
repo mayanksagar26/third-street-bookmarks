@@ -1,8 +1,8 @@
 # Third Street Bookmarks
 
-A personal X/Twitter bookmark reader with AI-powered features — built on top of [Field Theory CLI](https://github.com/afar1/fieldtheory-cli) by [@andrewfarah](https://x.com/andrewfarah).
+A personal, local-first X/Twitter bookmark reader with AI-powered features — pluggable sync that works with [Field Theory CLI](https://github.com/afar1/fieldtheory-cli) by [@andrewfarah](https://x.com/andrewfarah) **or** [birdclaw](https://birdclaw.sh) by [@steipete](https://x.com/steipete).
 
-> **Your bookmarks, locally. Searchable, classifiable, listenable.**
+> **Your bookmarks, locally. Searchable, classifiable, listenable — from any source, with state you own.**
 
 
 ---
