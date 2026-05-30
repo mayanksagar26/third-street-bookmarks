@@ -22,15 +22,25 @@ export default function Sidebar({
   currentFilter, onFilterChange,
   showUnreadOnly, onToggleUnread,
   catCounts, selectedCategories, onToggleCategory, onClearCategories,
-  favMap, favFolders, folderCounts,
+  favMap, favFolders, folderCounts, onRenameFavFolder,
   syncSource,
 }) {
   const [catSearch, setCatSearch] = useState('');
+  const [renamingFav, setRenamingFav] = useState(null);
+  const [renameText, setRenameText]   = useState('');
   const source = getSource(syncSource);
 
-  const favTotal = Object.keys(favMap).length;
+  // favMap values are arrays of folders (a bookmark can be in several)
+  const favTotal = Object.values(favMap).filter(a => a && a.length).length;
   const favCounts = {};
-  Object.values(favMap).forEach(f => { favCounts[f] = (favCounts[f] || 0) + 1; });
+  Object.values(favMap).forEach(arr => (arr || []).forEach(f => { favCounts[f] = (favCounts[f] || 0) + 1; }));
+
+  function commitFavRename() {
+    const to = renameText.trim();
+    if (renamingFav && to && to !== renamingFav) onRenameFavFolder?.(renamingFav, to);
+    setRenamingFav(null);
+    setRenameText('');
+  }
 
   const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
   const q = catSearch.trim().toLowerCase();
@@ -123,13 +133,28 @@ export default function Sidebar({
             <div
               key={folder}
               className={`sidebar-fav-item ${currentFilter === `fav:${folder}` ? 'active' : ''}`}
-              onClick={() => onFilterChange(`fav:${folder}`)}
+              onClick={() => renamingFav !== folder && onFilterChange(`fav:${folder}`)}
+              onDoubleClick={() => { setRenamingFav(folder); setRenameText(folder); }}
+              title="Double-click to rename"
             >
               <span className="sidebar-item-left">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b">
                   <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
                 </svg>
-                {folder}
+                {renamingFav === folder ? (
+                  <input
+                    className="fav-rename-input"
+                    autoFocus
+                    value={renameText}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => setRenameText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitFavRename();
+                      else if (e.key === 'Escape') { setRenamingFav(null); setRenameText(''); }
+                    }}
+                    onBlur={commitFavRename}
+                  />
+                ) : folder}
               </span>
               <span className="fav-badge">{count}</span>
             </div>

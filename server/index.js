@@ -103,6 +103,14 @@ function openStateDb() {
         voice_id TEXT,
         updated_at TEXT
       );
+      -- A bookmark can live in many favourite folders (many-to-many).
+      CREATE TABLE IF NOT EXISTS fav_membership (
+        id TEXT,
+        folder TEXT,
+        created_at TEXT,
+        PRIMARY KEY (id, folder)
+      );
+      CREATE INDEX IF NOT EXISTS idx_fav_folder ON fav_membership (folder);
     `);
     migrateState(stateDb);
   } catch { stateDb = null; }
@@ -112,38 +120,59 @@ function openStateDb() {
 // One-time seed: pull existing user state from bookmarks.json + Field Theory's
 // DB into state.db so nothing is lost on the switch. Non-destructive.
 function migrateState(conn) {
-  try {
-    if (conn.prepare('SELECT COUNT(*) c FROM user_state').get().c > 0) return;
-  } catch { return; }
   const now = new Date().toISOString();
-  let seeded = 0;
-  try {
-    const data = JSON.parse(fs.readFileSync(BOOKMARKS_JSON, 'utf8'));
-    const ins = conn.prepare(`INSERT OR IGNORE INTO user_state (id, is_read, fav_folder, color_label, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)`);
-    const tx = conn.transaction(rows => {
-      for (const b of rows) {
-        if (b.isRead || b.favFolder || b.colorLabel || b.note) {
-          ins.run(b.id, b.isRead ? 1 : 0, b.favFolder || null, b.colorLabel || null, b.note || null, now);
-          seeded++;
+  const userStateEmpty = (() => { try { return conn.prepare('SELECT COUNT(*) c FROM user_state').get().c === 0; } catch { return false; } })();
+
+  if (userStateEmpty) {
+    let seeded = 0;
+    try {
+      const data = JSON.parse(fs.readFileSync(BOOKMARKS_JSON, 'utf8'));
+      const ins = conn.prepare(`INSERT OR IGNORE INTO user_state (id, is_read, fav_folder, color_label, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)`);
+      const tx = conn.transaction(rows => {
+        for (const b of rows) {
+          if (b.isRead || b.favFolder || (b.favFolders && b.favFolders.length) || b.colorLabel || b.note) {
+            ins.run(b.id, b.isRead ? 1 : 0, b.favFolder || (b.favFolders && b.favFolders[0]) || null, b.colorLabel || null, b.note || null, now);
+            seeded++;
+          }
         }
+      });
+      tx(data);
+    } catch {}
+    try {
+      const ftDb = openDb();
+      if (ftDb) {
+        const rows = ftDb.prepare('SELECT id, is_read, fav_folder, color_label FROM bookmark_ui_state').all();
+        const up = conn.prepare(`INSERT INTO user_state (id, is_read, fav_folder, color_label, updated_at) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            is_read     = COALESCE(excluded.is_read,     is_read),
+            fav_folder  = COALESCE(excluded.fav_folder,  fav_folder),
+            color_label = COALESCE(excluded.color_label, color_label)`);
+        const tx = conn.transaction(rs => { for (const r of rs) up.run(r.id, r.is_read, r.fav_folder, r.color_label, now); });
+        tx(rows);
       }
-    });
-    tx(data);
-  } catch {}
+    } catch {}
+    console.log(`  [state.db] seeded user state for ${seeded} bookmarks`);
+  }
+
+  // Backfill fav_membership from the legacy single-folder column + any favFolders
+  // arrays already in bookmarks.json. Runs until membership has rows, so it also
+  // upgrades a state.db created by an earlier (single-folder) build.
   try {
-    const ftDb = openDb();
-    if (ftDb) {
-      const rows = ftDb.prepare('SELECT id, is_read, fav_folder, color_label FROM bookmark_ui_state').all();
-      const up = conn.prepare(`INSERT INTO user_state (id, is_read, fav_folder, color_label, updated_at) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          is_read     = COALESCE(excluded.is_read,     is_read),
-          fav_folder  = COALESCE(excluded.fav_folder,  fav_folder),
-          color_label = COALESCE(excluded.color_label, color_label)`);
-      const tx = conn.transaction(rs => { for (const r of rs) up.run(r.id, r.is_read, r.fav_folder, r.color_label, now); });
-      tx(rows);
+    if (conn.prepare('SELECT COUNT(*) c FROM fav_membership').get().c === 0) {
+      const ins = conn.prepare('INSERT OR IGNORE INTO fav_membership (id, folder, created_at) VALUES (?, ?, ?)');
+      const tx = conn.transaction(() => {
+        for (const r of conn.prepare('SELECT id, fav_folder FROM user_state WHERE fav_folder IS NOT NULL').all()) {
+          ins.run(r.id, r.fav_folder, now);
+        }
+        try {
+          const data = JSON.parse(fs.readFileSync(BOOKMARKS_JSON, 'utf8'));
+          for (const b of data) for (const f of (b.favFolders || [])) if (f) ins.run(b.id, f, now);
+        } catch {}
+      });
+      tx();
+      console.log(`  [state.db] fav_membership rows: ${conn.prepare('SELECT COUNT(*) c FROM fav_membership').get().c}`);
     }
   } catch {}
-  console.log(`  [state.db] seeded user state for ${seeded} bookmarks`);
 }
 
 // Partial upsert: only writes the fields present in `fields`, so null is a real
@@ -153,7 +182,7 @@ function stateUpsert(id, fields) {
   if (!conn) return;
   try {
     conn.prepare('INSERT OR IGNORE INTO user_state (id, updated_at) VALUES (?, ?)').run(id, new Date().toISOString());
-    const map = { isRead: 'is_read', favFolder: 'fav_folder', colorLabel: 'color_label', note: 'note' };
+    const map = { isRead: 'is_read', colorLabel: 'color_label', note: 'note' };  // folders → fav_membership
     const sets = [], vals = [];
     for (const [key, col] of Object.entries(map)) {
       if (key in fields) {
@@ -168,20 +197,70 @@ function stateUpsert(id, fields) {
   } catch {}
 }
 
+// ── Favourite folders (many-to-many) ─────────────────────────────────────────
+function favGetFolders(id) {
+  const conn = openStateDb();
+  if (!conn) return [];
+  try { return conn.prepare('SELECT folder FROM fav_membership WHERE id = ? ORDER BY folder').all(id).map(r => r.folder); }
+  catch { return []; }
+}
+
+// Replace a bookmark's folder set with `folders` (the desired full list).
+function favSetFolders(id, folders) {
+  const conn = openStateDb();
+  if (!conn) return [];
+  const clean = [...new Set((folders || []).map(f => String(f).trim()).filter(Boolean))];
+  try {
+    const tx = conn.transaction(() => {
+      conn.prepare('DELETE FROM fav_membership WHERE id = ?').run(id);
+      const ins = conn.prepare('INSERT OR IGNORE INTO fav_membership (id, folder, created_at) VALUES (?, ?, ?)');
+      const now = new Date().toISOString();
+      for (const f of clean) ins.run(id, f, now);
+    });
+    tx();
+  } catch {}
+  return clean;
+}
+
+// Rename a folder everywhere; merges into `to` if it already exists.
+function favRenameFolder(from, to) {
+  const conn = openStateDb();
+  if (!conn) return;
+  const f = String(from || '').trim(), t = String(to || '').trim();
+  if (!f || !t || f === t) return;
+  try {
+    const tx = conn.transaction(() => {
+      const ids = conn.prepare('SELECT id FROM fav_membership WHERE folder = ?').all(f).map(r => r.id);
+      const ins = conn.prepare('INSERT OR IGNORE INTO fav_membership (id, folder, created_at) VALUES (?, ?, ?)');
+      const now = new Date().toISOString();
+      for (const id of ids) ins.run(id, t, now);
+      conn.prepare('DELETE FROM fav_membership WHERE folder = ?').run(f);
+    });
+    tx();
+  } catch {}
+}
+
 // Overlay state.db onto a bookmark array by id — the DB wins, always.
 function applyState(list) {
   const conn = openStateDb();
   if (!conn) return list;
   try {
     const m = new Map(conn.prepare('SELECT * FROM user_state').all().map(r => [r.id, r]));
+    const favs = {};
+    for (const r of conn.prepare('SELECT id, folder FROM fav_membership').all()) {
+      (favs[r.id] = favs[r.id] || []).push(r.folder);
+    }
     for (const b of list) {
       const s = m.get(b.id);
       if (s) {
         b.isRead     = !!s.is_read;
-        b.favFolder  = s.fav_folder  || null;
         b.colorLabel = s.color_label || null;
         b.note       = s.note        || null;
       }
+      // favourites come solely from membership; fall back to legacy JSON fields
+      const folders = favs[b.id] || (b.favFolders && b.favFolders.length ? b.favFolders : (b.favFolder ? [b.favFolder] : []));
+      b.favFolders = [...folders].sort();
+      b.favFolder  = b.favFolders[0] || null;   // legacy single-folder consumers
     }
   } catch {}
   return list;
@@ -405,17 +484,43 @@ app.post('/api/read/bulk', (req, res) => {
   }
 });
 
+// Rename a folder across every bookmark (defined before /:id so it isn't shadowed).
+app.post('/api/fav-rename', (req, res) => {
+  try {
+    const { from, to } = req.body || {};
+    favRenameFolder(from, to);
+    // keep the JSON cache in sync
+    const data = readBookmarks();
+    const f = String(from || '').trim(), t = String(to || '').trim();
+    for (const b of data) {
+      if (Array.isArray(b.favFolders)) {
+        b.favFolders = [...new Set(b.favFolders.map(x => x === f ? t : x))];
+        b.favFolder = b.favFolders[0] || null;
+      } else if (b.favFolder === f) {
+        b.favFolder = t; b.favFolders = [t];
+      }
+    }
+    writeBookmarks(data);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Set a bookmark's full favourite-folder set: { folders: ["A","B"] } (empty = unfav).
 app.post('/api/fav/:id', (req, res) => {
   try {
     const { id } = req.params;
-    const { folder } = req.body;
+    let { folders, folder } = req.body || {};
+    if (!Array.isArray(folders)) folders = folder ? [folder] : [];   // back-compat
     const data = readBookmarks();
     const bm = data.find(b => b.id === id || b.tweetId === id);
     if (!bm) return res.status(404).json({ error: 'Not found' });
-    bm.favFolder = folder || null;
+    const saved = favSetFolders(bm.id, folders);
+    bm.favFolders = saved;
+    bm.favFolder = saved[0] || null;
     writeBookmarks(data);
-    stateUpsert(bm.id, { favFolder: bm.favFolder });
-    res.json({ folder: bm.favFolder });
+    res.json({ folders: saved });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

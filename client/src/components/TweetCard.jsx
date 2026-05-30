@@ -72,18 +72,24 @@ function formatAdded(s) {
 }
 
 export default function TweetCard({
-  bookmark: b, searchQuery, isRead, favFolder, favFolders,
+  bookmark: b, searchQuery, isRead, folders = [], allFolders = [],
   note, isFocused,
-  onToggleRead, onToggleFav, onUpdateNote, onSpeakBookmark,
+  onToggleRead, onSetFavFolders, onRenameFavFolder, onUpdateNote, onSpeakBookmark,
 }) {
   const [showFavPopup, setShowFavPopup]     = useState(false);
   const [showNotePopup, setShowNotePopup]   = useState(false);
   const [newFolder, setNewFolder]           = useState('');
+  const [renaming, setRenaming]             = useState(null);   // folder being renamed
+  const [renameText, setRenameText]         = useState('');
   const [noteText, setNoteText]             = useState(note || '');
   const favPopupRef   = useRef(null);
   const notePopupRef  = useRef(null);
   const favInputRef   = useRef(null);
   const noteInputRef  = useRef(null);
+
+  const isFav = folders.length > 0;
+  // Union of this bookmark's folders and all existing folders, for the picker.
+  const pickerFolders = [...new Set([...allFolders, ...folders])].sort();
 
   useEffect(() => { setNoteText(note || ''); }, [note]);
 
@@ -112,14 +118,26 @@ export default function TweetCard({
 
   function handleStarClick(e) {
     e.stopPropagation();
-    if (favFolder) { onToggleFav(b.id, null); return; }
-    setShowFavPopup(p => !p);
+    setShowFavPopup(p => !p);   // open the multi-folder picker (no instant remove)
   }
 
-  function saveFolder(folder) {
-    setShowFavPopup(false);
+  function toggleFolder(folder) {
+    const next = folders.includes(folder) ? folders.filter(f => f !== folder) : [...folders, folder];
+    onSetFavFolders(b.id, next);   // keeps popup open for multi-select
+  }
+
+  function addNewFolder() {
+    const name = newFolder.trim();
+    if (!name) return;
+    if (!folders.includes(name)) onSetFavFolders(b.id, [...folders, name]);
     setNewFolder('');
-    onToggleFav(b.id, folder || null);
+  }
+
+  function commitRename() {
+    const to = renameText.trim();
+    if (renaming && to && to !== renaming) onRenameFavFolder(renaming, to);
+    setRenaming(null);
+    setRenameText('');
   }
 
   function handleNoteClick(e) {
@@ -134,7 +152,7 @@ export default function TweetCard({
 
   return (
     <div
-      className={`tweet-card${isRead ? ' is-read' : ''}${isFocused ? ' is-focused' : ''}`}
+      className={`tweet-card${isRead && !isFav ? ' is-read' : ''}${isFav ? ' is-fav' : ''}${isFocused ? ' is-focused' : ''}`}
       data-id={b.id}
     >
       <a
@@ -218,44 +236,73 @@ export default function TweetCard({
               }
             </button>
 
-            {/* Star button */}
-            <button
-              className={`tw-btn star-btn${favFolder ? ' active' : ''}`}
-              title={favFolder ? `Saved in "${favFolder}" — click to remove` : 'Add to favourites'}
-              onClick={handleStarClick}
-              style={{ position: 'relative' }}
-            >
-              {favFolder
-                ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-              }
+            {/* Star button + multi-folder picker (popup is a sibling, NOT a child
+                of the button — nesting it inside made Space activate the button
+                and close the popup mid-type). */}
+            <span className="star-wrap">
+              <button
+                className={`tw-btn star-btn${isFav ? ' active' : ''}`}
+                title={isFav ? `In: ${folders.join(', ')}` : 'Add to favourites'}
+                onClick={handleStarClick}
+              >
+                {isFav
+                  ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                }
+              </button>
               {showFavPopup && (
                 <div className="fav-popup" ref={favPopupRef} onClick={e => e.stopPropagation()}>
-                  <div className="fav-popup-title">Save in</div>
-                  {favFolders.map(f => (
-                    <div key={f} className="fav-popup-folder" onClick={() => saveFolder(f)}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b">
-                        <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
-                      </svg>
-                      {f}
+                  <div className="fav-popup-title">Save in folders</div>
+                  {pickerFolders.map(f => (
+                    <div key={f} className="fav-popup-folder">
+                      {renaming === f ? (
+                        <input
+                          className="fav-rename-input"
+                          autoFocus
+                          value={renameText}
+                          onChange={e => setRenameText(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') commitRename();
+                            else if (e.key === 'Escape') { setRenaming(null); setRenameText(''); }
+                          }}
+                          onBlur={commitRename}
+                        />
+                      ) : (
+                        <>
+                          <label className="fav-folder-check" onClick={e => { e.preventDefault(); toggleFolder(f); }}>
+                            <input type="checkbox" checked={folders.includes(f)} readOnly />
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b">
+                              <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+                            </svg>
+                            <span className="fav-folder-name">{f}</span>
+                          </label>
+                          <button
+                            className="fav-rename-btn"
+                            title="Rename folder"
+                            onClick={() => { setRenaming(f); setRenameText(f); }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                          </button>
+                        </>
+                      )}
                     </div>
                   ))}
-                  {favFolders.length > 0 && <div className="fav-popup-divider" />}
+                  {pickerFolders.length > 0 && <div className="fav-popup-divider" />}
                   <input
                     ref={favInputRef}
                     className="fav-popup-input"
                     placeholder="New folder…"
                     value={newFolder}
                     onChange={e => setNewFolder(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && newFolder.trim() && saveFolder(newFolder.trim())}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addNewFolder(); } }}
                   />
-                  <button
-                    className="fav-popup-save"
-                    onClick={() => newFolder.trim() && saveFolder(newFolder.trim())}
-                  >Save</button>
+                  <div className="fav-popup-actions">
+                    <button className="fav-popup-add" onClick={addNewFolder}>Add</button>
+                    <button className="fav-popup-done" onClick={() => setShowFavPopup(false)}>Done</button>
+                  </div>
                 </div>
               )}
-            </button>
+            </span>
           </div>
         </div>
 

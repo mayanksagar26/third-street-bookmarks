@@ -10,7 +10,7 @@ A personal, local-first X/Twitter bookmark reader with AI-powered features — p
 ## What it does
 
 - **Browse** — fast, searchable X-styled dark UI with sort, filter, and pagination
-- **Filter** — by category (multi-select), author voice, read/unread, Forgotten Gems, favourites folders, and colour labels
+- **Filter** — by category (multi-select), author voice, read/unread, Forgotten Gems, multi-folder favourites, and colour labels
 - **AI Chat** — ask natural language questions about your collection, powered by Claude Code CLI or Codex CLI running locally
 - **Bookmark Podcast** — AI-generated audio digest from your collection — by topic, recent bookmarks, or a custom prompt — with a real-time waveform visualiser
 - **Stats** — scrollable analytics: KPIs, timeline chart, category growth by tweet date (multi-line), engagement leaders, posting hour heatmap, top domains
@@ -182,7 +182,7 @@ Key fields beyond the Field Theory defaults:
 | Field | Type | Description |
 |-------|------|-------------|
 | `isRead` | boolean | Read/unread state |
-| `favFolder` | string\|null | Favourite folder name (e.g. `"ToRead"`) |
+| `favFolders` | string[] | Favourite folders the bookmark belongs to (e.g. `["ToRead","Work"]`). `favFolder` (single) kept for back-compat |
 | `colorLabel` | string\|null | One of: `red orange yellow green blue purple pink` |
 | `note` | string\|null | Personal annotation (searchable) |
 | `quotedTweet` | object\|null | Quoted tweet content from Field Theory |
@@ -216,6 +216,15 @@ Or trigger classify from the UI via the Sync & Classify card in the right panel 
 ---
 
 ## Changelog
+
+### 1.2.0 — 2026-05-30
+
+Favourites overhaul.
+
+- **Multi-folder favourites** — a bookmark can now live in **several** favourite folders at once. The star opens a checkbox picker; tick as many folders as you like, or type a new one (spaces and all) and Add. Backed by a `fav_membership` table in the State DB, so memberships survive every sync.
+- **Rename folders in place** — a pencil on each folder in the picker, and double-click a folder in the sidebar, renames it everywhere (like renaming a folder).
+- **Fixed: typing a space no longer closes the picker** — the new-folder input was nested inside the star `<button>`, so Space activated the button; the popup is now a sibling element.
+- **Read/unread fixes** — opening a favourite folder shows **all** of its bookmarks (read + unread), not just unread; clicking **Unread** jumps to the homepage with all unread; favourited cards are never greyed out by read state (gold accent bar instead).
 
 ### 1.1.0 — 2026-05-30
 

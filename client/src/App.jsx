@@ -83,7 +83,8 @@ export default function App() {
         setReadIds(new Set(data.filter(b => b.isRead).map(b => b.id)));
         const fav = {}, notes = {};
         data.forEach(b => {
-          if (b.favFolder) fav[b.id] = b.favFolder;
+          const ff = b.favFolders?.length ? b.favFolders : (b.favFolder ? [b.favFolder] : []);
+          if (ff.length) fav[b.id] = ff;
           if (b.note) notes[b.id] = b.note;
         });
         setFavMap(fav);
@@ -171,8 +172,11 @@ export default function App() {
         if (bm) handleToggleRead(bm.id);
       } else if (e.key === 'f' && focusedIdx >= 0) {
         const bm = pageItems[focusedIdx];
-        if (bm && !favMap[bm.id]) handleToggleFav(bm.id, 'Favourites');
-        else if (bm) handleToggleFav(bm.id, null);
+        if (bm) {
+          const cur = favMap[bm.id] || [];
+          const next = cur.includes('Favourites') ? cur.filter(f => f !== 'Favourites') : [...cur, 'Favourites'];
+          handleSetFavFolders(bm.id, next);
+        }
       }
     }
     document.addEventListener('keydown', onKey);
@@ -201,10 +205,10 @@ export default function App() {
         const folder = currentFilter.slice(7);
         result = result.filter(b => (b.folderNames || []).includes(folder));
       } else if (currentFilter === 'fav:all') {
-        result = result.filter(b => favMap[b.id]);
+        result = result.filter(b => favMap[b.id]?.length);
       } else if (currentFilter.startsWith('fav:')) {
         const folder = currentFilter.slice(4);
-        result = result.filter(b => favMap[b.id] === folder);
+        result = result.filter(b => favMap[b.id]?.includes(folder));
       }
     }
 
@@ -227,7 +231,7 @@ export default function App() {
   }, [allBookmarks, currentFilter, currentSort, searchQuery, readIds, favMap, notesMap, currentVoice, showUnreadOnly, selectedCategories]);
 
   const unreadCount = useMemo(() => allBookmarks.filter(b => !readIds.has(b.id)).length, [allBookmarks, readIds]);
-  const favFolders  = useMemo(() => [...new Set(Object.values(favMap))].sort(), [favMap]);
+  const favFolders  = useMemo(() => [...new Set(Object.values(favMap).flat())].sort(), [favMap]);
 
   const catCounts = useMemo(() => {
     const counts = {};
@@ -265,17 +269,40 @@ export default function App() {
     } catch {}
   }, []);
 
-  const handleToggleFav = useCallback(async (id, folder) => {
+  // Set a bookmark's full favourite-folder set (a bookmark can be in many folders)
+  const handleSetFavFolders = useCallback(async (id, folders) => {
+    const clean = [...new Set((folders || []).map(f => f.trim()).filter(Boolean))];
+    setFavMap(prev => {
+      const next = { ...prev };
+      clean.length ? (next[id] = clean) : delete next[id];
+      return next;
+    });
     try {
       await fetch(`/api/fav/${id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder }),
+        body: JSON.stringify({ folders: clean }),
       });
-      setFavMap(prev => {
-        const next = { ...prev };
-        folder ? (next[id] = folder) : delete next[id];
-        return next;
+    } catch {}
+  }, []);
+
+  // Rename a favourite folder everywhere (like renaming a folder)
+  const handleRenameFavFolder = useCallback(async (from, to) => {
+    const f = (from || '').trim(), t = (to || '').trim();
+    if (!f || !t || f === t) return;
+    setFavMap(prev => {
+      const next = {};
+      for (const [id, arr] of Object.entries(prev)) {
+        next[id] = [...new Set(arr.map(x => x === f ? t : x))];
+      }
+      return next;
+    });
+    setCurrentFilter(prev => prev === `fav:${f}` ? `fav:${t}` : prev);
+    try {
+      await fetch('/api/fav-rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: f, to: t }),
       });
     } catch {}
   }, []);
@@ -433,7 +460,9 @@ export default function App() {
 
   const handleFilterChange = useCallback((filter) => {
     setCurrentFilter(prev => (prev === filter && filter !== 'all') ? 'all' : filter);
-    if (filter === 'all') setShowUnreadOnly(false);
+    // 'all' and favourites views show everything (read + unread); favourites are
+    // never hidden by read state.
+    if (filter === 'all' || filter.startsWith('fav:')) setShowUnreadOnly(false);
     setCurrentPage(1);
     setFocusedIdx(-1);
   }, []);
@@ -461,7 +490,7 @@ export default function App() {
         currentFilter={currentFilter}
         onFilterChange={handleFilterChange}
         showUnreadOnly={showUnreadOnly}
-        onToggleUnread={() => { setShowUnreadOnly(p => !p); setCurrentPage(1); }}
+        onToggleUnread={() => { setCurrentFilter('all'); setShowUnreadOnly(p => !p); setCurrentPage(1); setFocusedIdx(-1); }}
         catCounts={catCounts}
         selectedCategories={selectedCategories}
         onToggleCategory={handleToggleCategory}
@@ -469,6 +498,7 @@ export default function App() {
         favMap={favMap}
         favFolders={favFolders}
         folderCounts={folderCounts}
+        onRenameFavFolder={handleRenameFavFolder}
         syncSource={syncSource}
       />
       <main className="main">
@@ -509,7 +539,8 @@ export default function App() {
               notesMap={notesMap}
               focusedIdx={focusedIdx}
               onToggleRead={handleToggleRead}
-              onToggleFav={handleToggleFav}
+              onSetFavFolders={handleSetFavFolders}
+              onRenameFavFolder={handleRenameFavFolder}
               onUpdateNote={handleUpdateNote}
               onBulkRead={handleBulkRead}
               onPageChange={(p) => { setCurrentPage(p); setFocusedIdx(-1); }}

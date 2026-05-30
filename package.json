@@ -1,6 +1,6 @@
 {
   "name": "third-street-bookmarks",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
     "setup": "npm install && npm install --prefix server && npm install --prefix client",

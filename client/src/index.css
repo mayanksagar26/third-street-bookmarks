@@ -353,13 +353,34 @@ body {
   text-transform: uppercase; letter-spacing: 0.8px;
   color: var(--text-secondary); padding: 4px 8px 10px;
 }
+.star-wrap { position: relative; display: inline-flex; }
 .fav-popup-folder {
-  display: flex; align-items: center; gap: 9px;
-  padding: 8px 10px; border-radius: 8px;
-  cursor: pointer; font-size: 14px; color: var(--text-primary);
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 8px;
+  font-size: 14px; color: var(--text-primary);
   transition: background 0.1s;
 }
 .fav-popup-folder:hover { background: rgba(255,255,255,0.06); }
+.fav-folder-check {
+  display: flex; align-items: center; gap: 9px;
+  flex: 1; min-width: 0; cursor: pointer; user-select: none;
+}
+.fav-folder-check input[type="checkbox"] {
+  width: 15px; height: 15px; accent-color: #f59e0b; cursor: pointer; flex-shrink: 0;
+}
+.fav-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav-rename-btn {
+  background: none; border: none; color: var(--text-tertiary);
+  padding: 4px; border-radius: 6px; cursor: pointer; opacity: 0; flex-shrink: 0;
+  display: inline-flex; transition: opacity 0.1s, color 0.1s;
+}
+.fav-popup-folder:hover .fav-rename-btn { opacity: 1; }
+.fav-rename-btn:hover { color: var(--accent); background: rgba(255,255,255,0.06); }
+.fav-rename-input {
+  flex: 1; min-width: 0; padding: 4px 8px;
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 6px;
+  color: var(--text-primary); font-size: 14px; outline: none;
+}
 .fav-popup-divider { height: 1px; background: var(--border); margin: 6px 0; }
 .fav-popup-input {
   width: 100%; padding: 8px 10px;
@@ -369,14 +390,21 @@ body {
   transition: border-color 0.15s;
 }
 .fav-popup-input:focus { border-color: var(--accent); }
-.fav-popup-save {
-  width: 100%; margin-top: 7px; padding: 8px;
-  background: var(--accent); color: #fff;
-  border: none; border-radius: 8px;
-  font-size: 14px; font-weight: 600; cursor: pointer;
+.fav-popup-actions { display: flex; gap: 6px; margin-top: 7px; }
+.fav-popup-add {
+  flex: 1; padding: 8px; background: var(--accent); color: #fff;
+  border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
   transition: background 0.15s;
 }
-.fav-popup-save:hover { background: var(--accent-hover); }
+.fav-popup-add:hover { background: var(--accent-hover); }
+.fav-popup-done {
+  padding: 8px 14px; background: none; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 8px; font-size: 14px; cursor: pointer;
+}
+.fav-popup-done:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+
+/* Favourited cards stay prominent regardless of read state (#3c) */
+.tweet-card.is-fav { box-shadow: inset 3px 0 0 #f59e0b; }
 
 /* ── Category multi-select ── */
 .cat-search-wrap { padding: 4px 12px 6px; position: relative; }
