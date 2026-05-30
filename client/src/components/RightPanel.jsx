@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
+import { SOURCES, CAPABILITY_TOOLS, CAPABILITY_LABELS, getSource, sourceProvides } from '../sources';
 // Note: syncSettingsOpen uses simple toggle — no outside-click needed since it's inline
 
 const TOOLS = [
@@ -40,7 +41,12 @@ export default function RightPanel({
   activeMode, setActiveMode,
   aiBackend, onSetAiBackend,
   classifyBackend, onSetClassifyBackend,
+  syncSource, onSetSyncSource, sourceInfo = [],
 }) {
+  const source = getSource(syncSource);
+  // Capability-gated tools: shown always, but locked unless the active source provides them.
+  const capTools = CAPABILITY_TOOLS.map(t => ({ ...t, unlocked: sourceProvides(syncSource, t.cap) }));
+  const installedMap = Object.fromEntries(sourceInfo.map(s => [s.id, s.installed]));
   const [menuOpen, setMenuOpen]               = useState(false);
   const [syncSettingsOpen, setSyncSettingsOpen] = useState(false);
   const menuRef = useRef(null);
@@ -98,6 +104,29 @@ export default function RightPanel({
                 )}
               </button>
             ))}
+
+            {/* Source-gated tools — unlock when a richer source is active */}
+            <div className="profile-menu-divider">
+              <span>Unlocked by {source.label}</span>
+            </div>
+            {capTools.map(tool => (
+              <button
+                key={tool.id}
+                className={`profile-menu-item ${activeMode === tool.id ? 'active' : ''} ${tool.unlocked ? '' : 'locked'}`}
+                disabled={!tool.unlocked}
+                title={tool.unlocked ? '' : `Switch sync source to a backend that provides ${CAPABILITY_LABELS[tool.cap]}`}
+                onClick={() => { if (tool.unlocked) { setActiveMode(activeMode === tool.id ? null : tool.id); setMenuOpen(false); } }}
+              >
+                <span className="profile-menu-icon">{tool.unlocked ? '✨' : '🔒'}</span>
+                <div className="profile-menu-info">
+                  <div className="profile-menu-label">{tool.label}</div>
+                  <div className="profile-menu-desc">{tool.unlocked ? tool.desc : 'Requires a richer source'}</div>
+                </div>
+                {activeMode === tool.id && tool.unlocked && (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--accent)"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                )}
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -140,8 +169,30 @@ export default function RightPanel({
           </button>
         </div>
 
-        {/* Inline classify engine picker — expands when gear is open */}
+        {/* Inline source + classify pickers — expand when gear is open */}
         {syncSettingsOpen && (
+          <>
+          <div className="sync-section-label">Source</div>
+          <div className="sync-backend-list" style={{ marginBottom: 10 }}>
+            {SOURCES.map(s => (
+              <button
+                key={s.id}
+                className={`sync-backend-item ${syncSource === s.id ? 'active' : ''}`}
+                onClick={() => onSetSyncSource(s.id)}
+              >
+                <span>{s.icon} {s.label}{installedMap[s.id] === false ? ' · not installed' : ''}</span>
+                <span className="sync-backend-hint">{s.blurb}</span>
+              </button>
+            ))}
+          </div>
+          {/* What the active source unlocks */}
+          <div className="source-caps">
+            {source.provides.map(cap => (
+              <span key={cap} className="source-cap-chip">{CAPABILITY_LABELS[cap] || cap}</span>
+            ))}
+          </div>
+
+          <div className="sync-section-label">Classify engine</div>
           <div className="sync-backend-list" style={{ marginBottom: 12 }}>
             {[
               { id: 'python', label: '🐍 Python', hint: 'regex + optional OpenAI key' },
@@ -158,13 +209,14 @@ export default function RightPanel({
               </button>
             ))}
           </div>
+          </>
         )}
 
         <button className={btnClass} onClick={onSync}>
           <svg viewBox="0 0 24 24" fill="currentColor" className={syncState.status === 'running' ? 'spin' : ''}>
             <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
           </svg>
-          Sync &amp; Classify
+          Sync via {source.label}
         </button>
         {syncState.msg && <div className="action-status" style={{ marginTop: 6 }}>{syncState.msg}</div>}
       </div>

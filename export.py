@@ -29,6 +29,23 @@ def _split_csv(val):
     return [v.strip() for v in val.split(",") if v.strip()]
 
 
+def merge_rows(json_path, new_rows, source):
+    """Union `new_rows` (this source's complete current set) into the existing
+    bookmarks.json: keep rows owned by other sources, drop this source's stale
+    (un-bookmarked) rows, let new_rows win on overlap. User state already lives
+    on new_rows, so read/fav history is preserved."""
+    try:
+        existing = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception:
+        existing = []
+    new_ids = {r["id"] for r in new_rows}
+    kept = [
+        b for b in existing
+        if b.get("id") not in new_ids and (b.get("source") or "fieldtheory") != source
+    ]
+    return new_rows + kept
+
+
 def load_custom_state(json_path):
     """Load fields that live only in bookmarks.json, not in SQLite."""
     try:
@@ -112,12 +129,22 @@ def export(db_path, json_path):
             "articleSite":           r.get("article_site"),
             "syncedAt":              r.get("synced_at"),
             "quotedTweet":           _parse_json(r.get("quoted_tweet_json"), None),
+            "source":                "fieldtheory",
             # Custom fields — SQLite is primary, JSON fills gaps, note is JSON-only
             "isRead":      prev.get("isRead")      or bool(r.get("is_read")),
             "favFolder":   prev.get("favFolder")   or r.get("fav_folder"),
             "colorLabel":  r.get("db_color_label") or prev.get("colorLabel"),
             "note":        prev.get("note"),
         })
+
+    # Merge into the existing file by default so a Field Theory sync keeps rows
+    # from other sources (e.g. birdclaw) and never resets your read/fav history.
+    if "--replace" not in sys.argv:
+        final = merge_rows(json_path, out, "fieldtheory")
+        json_path.write_text(json.dumps(final, indent=2, ensure_ascii=False), encoding="utf-8")
+        kept = len(final) - len(out)
+        print(f"  Merged {len(out)} Field Theory bookmarks (+{kept} kept from other sources = {len(final)}) → {json_path}")
+        return len(final)
 
     json_path.write_text(
         json.dumps(out, indent=2, ensure_ascii=False),

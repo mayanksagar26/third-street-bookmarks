@@ -9,8 +9,11 @@ import ChatWithBookmarks from './components/ChatWithBookmarks';
 import StatsObservations from './components/StatsObservations';
 import BookmarkPodcast from './components/BookmarkPodcast';
 import VoiceBubble from './components/VoiceBubble';
+import BirdclawPanel from './components/BirdclawPanel';
+import { DEFAULT_SOURCE, CAPABILITY_TOOLS } from './sources';
 
 const PAGE_SIZE = 30;
+const CAP_MODES = CAPABILITY_TOOLS.map(t => t.id); // ['likes','inbox','digests']
 
 function parseDate(s) {
   try { return new Date(s).getTime() || 0; } catch { return 0; }
@@ -61,6 +64,8 @@ export default function App() {
   const [activeMode, setActiveMode]             = useState(null);
   const [aiBackend, setAiBackend]               = useState('claude');
   const [classifyBackend, setClassifyBackend]   = useState('python');
+  const [syncSource, setSyncSource]             = useState(DEFAULT_SOURCE);
+  const [sourceInfo, setSourceInfo]             = useState([]); // [{id,label,provides,installed}]
   const [ttsConfig, setTtsConfigState]          = useState(loadTtsConfig);
   const [showVoiceSetup, setShowVoiceSetup]     = useState(false);
   const [voicePlaying, setVoicePlaying]         = useState(false);
@@ -93,6 +98,14 @@ export default function App() {
     fetch('/api/settings').then(r => r.json()).then(d => {
       if (d.aiBackend) setAiBackend(d.aiBackend);
       if (d.classifyBackend) setClassifyBackend(d.classifyBackend);
+      if (d.syncSource) setSyncSource(d.syncSource);
+    }).catch(() => {});
+  }, []);
+
+  // Load source registry (capabilities + install hints)
+  useEffect(() => {
+    fetch('/api/sources').then(r => r.json()).then(d => {
+      if (d.sources) setSourceInfo(d.sources);
     }).catch(() => {});
   }, []);
 
@@ -328,6 +341,17 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  const handleSetSyncSource = useCallback(async (source) => {
+    setSyncSource(source);
+    // Leaving a birdclaw-only mode if we switch back to a source that lacks it
+    setActiveMode(m => (CAP_MODES.includes(m) ? null : m));
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ syncSource: source }),
+    }).catch(() => {});
+  }, []);
+
   const handleSetTtsConfig = useCallback((cfg) => {
     setTtsConfigState(cfg);
     saveTtsConfig(cfg);
@@ -445,6 +469,7 @@ export default function App() {
         favMap={favMap}
         favFolders={favFolders}
         folderCounts={folderCounts}
+        syncSource={syncSource}
       />
       <main className="main">
         {activeMode === 'chat' ? (
@@ -453,6 +478,8 @@ export default function App() {
           <StatsObservations bookmarks={allBookmarks} onClose={() => setActiveMode(null)} />
         ) : activeMode === 'podcast' ? (
           <BookmarkPodcast bookmarks={allBookmarks} ttsConfig={ttsConfig} onSetTtsConfig={handleSetTtsConfig} aiBackend={aiBackend} onClose={() => setActiveMode(null)} />
+        ) : CAP_MODES.includes(activeMode) ? (
+          <BirdclawPanel mode={activeMode} onClose={() => setActiveMode(null)} />
         ) : (
           <>
             <Header
@@ -504,6 +531,9 @@ export default function App() {
         onSetAiBackend={handleSetAiBackend}
         classifyBackend={classifyBackend}
         onSetClassifyBackend={handleSetClassifyBackend}
+        syncSource={syncSource}
+        onSetSyncSource={handleSetSyncSource}
+        sourceInfo={sourceInfo}
       />
       {voicePlaying && (
         <VoiceBubble

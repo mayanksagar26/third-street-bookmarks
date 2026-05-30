@@ -16,3 +16,4 @@ client/dist/
 
 # OS
 .DS_Store
+.gstack/

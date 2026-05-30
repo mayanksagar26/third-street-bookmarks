@@ -1345,6 +1345,88 @@ kbd {
 .sync-backend-item.active { border-color: var(--accent); background: rgba(29,155,240,0.08); font-weight: 600; }
 .sync-backend-hint { font-size: 11px; color: var(--text-tertiary); font-weight: 400; }
 
+/* ── Source picker ── */
+.sync-section-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-tertiary); font-weight: 600; margin: 4px 0 6px;
+}
+.source-caps { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px; }
+.source-cap-chip {
+  font-size: 10px; padding: 2px 7px; border-radius: 999px;
+  background: rgba(29,155,240,0.10); color: var(--accent);
+  border: 1px solid rgba(29,155,240,0.25);
+}
+
+/* ── Source-gated tools in profile menu ── */
+.profile-menu-divider {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px 4px; margin-top: 4px;
+}
+.profile-menu-divider span {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-tertiary); font-weight: 600; white-space: nowrap;
+}
+.profile-menu-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+.profile-menu-item.locked { opacity: 0.45; cursor: not-allowed; }
+.profile-menu-item.locked:hover { background: none; }
+
+/* ── birdclaw feature panel (likes / inbox / digests) ── */
+.bc-panel { max-width: 680px; margin: 0 auto; padding: 24px 20px 80px; }
+.bc-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.bc-title { font-size: 22px; font-weight: 700; margin: 0 0 4px; }
+.bc-sub { font-size: 13px; color: var(--text-tertiary); }
+.bc-close {
+  background: none; border: none; color: var(--text-tertiary);
+  font-size: 16px; cursor: pointer; padding: 4px 8px;
+}
+.bc-close:hover { color: var(--text-primary); }
+
+.bc-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.bc-tab {
+  padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
+  background: none; color: var(--text-secondary); font-size: 13px; cursor: pointer;
+}
+.bc-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(29,155,240,0.08); }
+
+.bc-state { padding: 40px 16px; text-align: center; color: var(--text-tertiary); font-size: 14px; }
+.bc-error { color: #f4655f; }
+.bc-hint { margin-top: 8px; font-size: 12px; color: var(--text-tertiary); }
+.bc-hint code, .bc-error code {
+  font-family: ui-monospace, monospace; font-size: 11px;
+  background: var(--bg-elevated); padding: 1px 5px; border-radius: 4px;
+}
+
+.bc-list { display: flex; flex-direction: column; }
+.bc-row { display: flex; gap: 12px; padding: 14px 4px; border-bottom: 1px solid var(--border); }
+.bc-avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; overflow: hidden;
+  background: var(--bg-elevated); display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); font-weight: 700; font-size: 15px;
+}
+.bc-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.bc-row-body { min-width: 0; flex: 1; }
+.bc-row-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bc-name { font-weight: 700; font-size: 14px; }
+.bc-handle { color: var(--text-tertiary); font-size: 13px; }
+.bc-score {
+  margin-left: auto; font-size: 11px; font-weight: 700; color: var(--accent);
+  background: rgba(29,155,240,0.10); border: 1px solid rgba(29,155,240,0.25);
+  padding: 1px 8px; border-radius: 999px;
+}
+.bc-text { font-size: 14px; line-height: 1.5; margin: 3px 0; white-space: pre-wrap; word-break: break-word; }
+.bc-summary { font-size: 13px; color: var(--text-secondary); font-style: italic; margin: 4px 0; }
+.bc-meta { display: flex; gap: 14px; font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
+.bc-meta a { color: var(--accent); text-decoration: none; }
+
+.bc-digest {
+  white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace;
+  font-size: 13px; line-height: 1.6; color: var(--text-primary);
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px; margin: 0;
+}
+
 /* ── Chat AI backend picker ── */
 .chat-backend-picker {
   display: flex; align-items: center; gap: 8px;

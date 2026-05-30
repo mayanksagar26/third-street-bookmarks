@@ -158,14 +158,58 @@ def save_category(conn: sqlite3.Connection, tweet_id: str, category: str):
     )
 
 
+# ── JSON mode (source-agnostic: classifies a bookmarks.json in place) ──────────
+
+def classify_json_file(path: Path, backend: str):
+    """Classify unclassified rows in a bookmarks.json directly, no SQLite.
+    Used by sources (e.g. birdclaw) that export JSON rather than ft's DB."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    todo = [
+        b for b in data
+        if not b.get("primaryCategory") or b.get("primaryCategory") in ("", "unclassified")
+    ]
+    if not todo:
+        print("  Nothing to classify.")
+        return
+
+    use_llm = backend in ("openai", "claude", "codex")
+    mode = {"openai": "openai/gpt-4o-mini", "claude": "claude CLI", "codex": "codex CLI"}.get(backend, "regex (offline)")
+    print(f"  Classifying {len(todo)} bookmarks using {mode}...")
+
+    batch_size = 20 if use_llm else len(todo)
+    for i in range(0, len(todo), batch_size):
+        batch = [{"text": b.get("text", "")} for b in todo[i : i + batch_size]]
+        try:
+            if backend == "openai":
+                cats = classify_openai(batch)
+            elif backend in ("claude", "codex"):
+                cats = classify_cli(batch, backend)
+            else:
+                cats = [classify_regex(t["text"]) for t in batch]
+        except Exception as e:
+            print(f"  Warning: batch failed ({e}), falling back to regex")
+            cats = [classify_regex(t["text"]) for t in batch]
+
+        for b, cat in zip(todo[i : i + batch_size], cats):
+            b["primaryCategory"] = cat
+            b["categories"] = [cat]
+        print(f"  Categories: {min(i + batch_size, len(todo))}/{len(todo)}", flush=True)
+
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  Done. {len(todo)} bookmarks classified.")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
     # Backend selection: --backend=claude|codex|openai|regex
     backend = 'regex'
+    json_path = None
     for arg in sys.argv[1:]:
         if arg.startswith('--backend='):
             backend = arg.split('=', 1)[1]
+        elif arg.startswith('--json='):
+            json_path = Path(arg.split('=', 1)[1])
 
     if backend == 'regex':
         if os.environ.get("OPENAI_API_KEY"):
@@ -174,6 +218,11 @@ def main():
             backend = 'claude'
         elif os.environ.get("USE_CODEX_CLI"):
             backend = 'codex'
+
+    # JSON mode short-circuits the SQLite path entirely.
+    if json_path is not None:
+        classify_json_file(json_path, backend)
+        return
 
     use_llm = backend in ('openai', 'claude', 'codex')
     mode = {'openai': 'openai/gpt-4o-mini', 'claude': 'claude CLI', 'codex': 'codex CLI'}.get(backend, 'regex (offline)')

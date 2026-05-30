@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getSource } from '../sources';
 
 const CAT_DOT_COLORS = {
   technology:'#1d9bf0', tech:'#1d9bf0', ai:'#a855f7',
@@ -22,8 +23,10 @@ export default function Sidebar({
   showUnreadOnly, onToggleUnread,
   catCounts, selectedCategories, onToggleCategory, onClearCategories,
   favMap, favFolders, folderCounts,
+  syncSource,
 }) {
   const [catSearch, setCatSearch] = useState('');
+  const source = getSource(syncSource);
 
   const favTotal = Object.keys(favMap).length;
   const favCounts = {};
@@ -46,12 +49,12 @@ export default function Sidebar({
           <span className="sidebar-logo-text">TSB</span>
           <span className="sidebar-logo-sub">
             Powered by{' '}
-            <a href="https://github.com/afar1/fieldtheory-cli" target="_blank" rel="noopener noreferrer" className="sidebar-logo-link">
-              Field Theory CLI
+            <a href={source.link} target="_blank" rel="noopener noreferrer" className="sidebar-logo-link">
+              {source.label}
             </a>
             {' '}by{' '}
-            <a href="https://x.com/andrewfarah" target="_blank" rel="noopener noreferrer" className="sidebar-logo-link">
-              @andrewfarah
+            <a href={source.author.x} target="_blank" rel="noopener noreferrer" className="sidebar-logo-link">
+              {source.author.name}
             </a>
           </span>
         </div>
