@@ -29,6 +29,7 @@ already have installed: no API key, no upload, no account.
 - **Voice** — browser TTS (free), ElevenLabs or Sarvam AI
 - **Notes, labels, read/unread** — kept in an app-owned SQLite, so no sync ever resets them
 - **Settings** — AI backend, classify engine, bookmarks location, and a reading font (system, Inter, serif, hand-drawn, mono — all bundled, no network)
+- **Profile picture** — TJ by default, any of the Recess gang (Spinelli, Gretchen, Gus, Vince, Mikey, King Bob, Miss Finster), or upload your own
 
 ---
 
@@ -158,6 +159,7 @@ what you tick.
 ├── settings.json
 ├── sources/            hn · yt · ig · link, owned by this app
 ├── imports/            exports you uploaded, kept for re-import
+├── avatar.jpeg         your uploaded profile picture, if any
 └── auth-token          per-launch API credential (0600)
 ```
 
@@ -230,6 +232,7 @@ Brings the web app level with the macOS app.
 - **New theme** built around the logo; long bookmarks clamp; keyboard-reachable sidebar rows.
 - **Hardened local API** — loopback bind, per-launch token, Origin/Host checks, path validation, sandboxed agents.
 - **Data moves to `~/.tsb`**, shared with the macOS app; 1.x settings and bookmarks are picked up automatically.
+- **Profile picture picker** — TJ, seven illustrated Recess characters, or an uploaded photo (cropped to a square and kept in `~/.tsb`).
 - **Removed:** birdclaw (and its Liked Tweets, Inbox Triage and AI Digests views), Forgotten Gems.
 
 ### 1.2.0 — 2026-05-30

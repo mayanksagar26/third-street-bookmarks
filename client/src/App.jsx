@@ -417,7 +417,7 @@ export default function App() {
     for (const b of allBookmarks) {
       const src = b.source || 'x';
       for (const f of (b.folderNames || [])) {
-        const key = `${src} ${f}`;
+        const key = `${src}\u0000${f}`;
         counts.set(key, (counts.get(key) || 0) + 1);
         if (!bySource.has(f)) bySource.set(f, new Set());
         bySource.get(f).add(src);
@@ -425,7 +425,7 @@ export default function App() {
     }
     return [...counts.entries()]
       .map(([key, count]) => {
-        const sep = key.indexOf(' ');
+        const sep = key.indexOf('\u0000');
         const source = key.slice(0, sep);
         const name = key.slice(sep + 1);
         return { key, name, source, count, ambiguous: bySource.get(name).size > 1 };
@@ -910,7 +910,7 @@ export default function App() {
         )}
       </main>
       <RightPanel
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={section => setSettingsOpen(typeof section === 'string' ? section : true)}
         bookmarks={allBookmarks}
         currentVoice={currentVoice}
         onVoiceClick={handleVoiceClick}
@@ -929,7 +929,12 @@ export default function App() {
         browserInfo={browserInfo}
         sourceInfo={sourceInfo}
       />
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <Settings
+          initialSection={typeof settingsOpen === 'string' ? settingsOpen : undefined}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       {voicePlaying && (
         <VoiceBubble
           isPlaying={voicePlaying}
