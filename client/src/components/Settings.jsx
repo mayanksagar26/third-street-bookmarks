@@ -97,7 +97,23 @@ function AvatarPicker({ value, hasUpload, onPick }) {
   return (
     <div className="avatar-picker">
     <div className="avatar-grid">
-      <div className="avatar-options" role="radiogroup" aria-label="Profile picture">
+      <div
+        className="avatar-options"
+        role="radiogroup"
+        aria-label="Profile picture"
+        onKeyDown={e => {
+          // Arrow keys move between choices, as a radio group promises.
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+          if (!step) return;
+          const radios = [...e.currentTarget.querySelectorAll('[role="radio"]')];
+          const idx = radios.indexOf(document.activeElement);
+          if (idx < 0) return;
+          e.preventDefault();
+          const next = radios[(idx + step + radios.length) % radios.length];
+          next.focus();
+          next.click();
+        }}
+      >
       {AVATARS.map(a => (
         <button
           key={a.id}
