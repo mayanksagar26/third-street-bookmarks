@@ -20,9 +20,9 @@ already have installed: no API key, no upload, no account.
 - **Onboarding** — a skippable first-run flow that finds your coding CLI and your existing bookmarks file
 - **Browse Hacker News live** — AI, Front Page and New tabs; nothing is stored until you press Save
 - **Imports** — YouTube videos, public playlists and Google Takeout; Instagram's official export (ZIP, JSON or HTML)
-- **Favourites** — multi-folder, spanning every source, renamable, never touched by a sync
+- **Favourites** — multi-folder, spanning every source, renamable and pinnable, never touched by a sync
 - **Folders** — Instagram collections and YouTube playlists land as folders marked with their service
-- **AI Chat** — ask questions in plain English, with Markdown answers and results you can file into folders
+- **AI Chat** — ask questions in plain English from a side window (or full screen), with Markdown answers and results you can file into folders
 - **AI on every card** — explain a bookmark in context (this one call may use web search, never web fetch)
 - **Bookmark Podcast** — turn a slice of your collection into an audio digest
 - **Stats & Observations** — reading rate, author diversity, categories, saving patterns
@@ -220,6 +220,14 @@ Or use **Sync & Classify** in the right panel.
 
 ## Changelog
 
+### 2.1.0 — 2026-09-13
+
+- **Profile picture** — TJ by default, seven illustrated Recess characters, or an uploaded photo (cropped to a square and kept in `~/.tsb`).
+- **Chat in a side window** — a launcher bubble opens chat in a small window that slides in from the right, with a full-screen toggle; the conversation survives switching between them. ⌘K, the card AI button and the tools menu all open it.
+- **Pinned favourite folders** — pinned folders sit above the rest in pin order, even when empty, and keep their pin through a rename.
+- **Find or create a folder** — the favourites picker has one field; Enter ticks an exact match or creates the folder.
+- **Folders list scrolls** — with a search box once there are more than five.
+
 ### 2.0.0 — 2026-09-13
 
 Brings the web app level with the macOS app.
@@ -232,7 +240,6 @@ Brings the web app level with the macOS app.
 - **New theme** built around the logo; long bookmarks clamp; keyboard-reachable sidebar rows.
 - **Hardened local API** — loopback bind, per-launch token, Origin/Host checks, path validation, sandboxed agents.
 - **Data moves to `~/.tsb`**, shared with the macOS app; 1.x settings and bookmarks are picked up automatically.
-- **Profile picture picker** — TJ, seven illustrated Recess characters, or an uploaded photo (cropped to a square and kept in `~/.tsb`).
 - **Removed:** birdclaw (and its Liked Tweets, Inbox Triage and AI Digests views), Forgotten Gems.
 
 ### 1.2.0 — 2026-05-30
