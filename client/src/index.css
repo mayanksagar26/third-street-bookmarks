@@ -1,20 +1,146 @@
+/* Playfair Display, bundled rather than fetched — see the note in index.html.
+   One variable file per subset covers 600 and 700. `swap` keeps the first
+   paint instant; the file is local, so the swap is imperceptible. */
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url('/fonts/playfair-display-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url('/fonts/playfair-display-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Rows that are controls ───────────────────────────────────────────────────
+   A row you click is a <button>, not a <div> with an onClick: a div is
+   unreachable by keyboard and invisible to a screen reader, so the sidebar
+   filters, the source list and the voice rows were mouse-only.
+
+   Undoing the browser's own button chrome happens here, once, rather than in
+   each rule. This block sits directly after the global reset so that every
+   rule further down still owns colour, background, font-size and hover — they
+   come later, so they win. */
+.sidebar-item,
+.sidebar-fav-item,
+.source-main,
+.top-author,
+.cat-chip,
+.cat-clear-all,
+.tweet-note {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+/* Full-bleed rows only. A category chip sizes to its own text. */
+.sidebar-item,
+.sidebar-fav-item,
+.top-author,
+.cat-clear-all,
+.tweet-note {
+  width: 100%;
+}
+
+/* Somewhere to look.
+   Reaching a row by keyboard is only half of it — you also have to be able to
+   see which one you are on, and the app styles focus on text inputs only, so
+   every button was relying on the platform ring over a dark custom surface.
+   `:focus-visible` rather than `:focus`, so a mouse click doesn't leave a ring
+   behind on the row you just pressed. */
+:where(button, [role="button"], a, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
 :root {
-  --bg: #000;
-  --bg-elevated: #0f0f0f;
-  --bg-hover: #080808;
-  --border: #2f3336;
-  --text-primary: #e7e9ea;
-  --text-secondary: #71767b;
-  --text-tertiary: #3e4347;
-  --accent: #1d9bf0;
-  --accent-hover: #1a8cd8;
+  /* ── Logo palette ──────────────────────────────────────────────────────────
+     Sampled straight out of the app icon: a near-black navy body that fades
+     from slate at the top to ink at the bottom, and an azure bookmark that
+     runs bright-to-deep. Everything else in the theme is derived from these
+     five, so the window and the icon in the Dock read as the same object. */
+  --logo-navy: #1c2633;
+  --logo-ink: #0c0d12;
+  --logo-blue: #37b4ff;
+  --logo-blue-mid: #2cacff;
+  --logo-blue-deep: #1d7fd6;
+
+  /* ── Ladder ────────────────────────────────────────────────────────────────
+     The bottom three rungs are the icon's own body, sampled from it: #1c2632
+     at the top of the mark fading to #0c0d12 at the bottom. That's a black
+     with a cool lean, not a grey — a neutral grey ladder made the app look
+     washed out next to its own Dock icon. */
+  --grey-100: #c6ced9;
+  --grey-300: #79838f;
+  --grey-500: #39424f;
+  --grey-700: #1c2632;
+  --grey-800: #131821;
+  --grey-900: #0c0d12;
+
+  --bg: #07080b;
+  --bg-solid: #0c0d12;
+  /* Surfaces are translucent by default so the same rules produce glass over
+     macOS vibrancy and a tinted panel over the gradient backdrop in a browser.
+     White alpha over black stays neutral at every opacity. */
+  --bg-elevated: rgba(255, 255, 255, 0.06);
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text-primary: #edf0f5;
+  --text-secondary: #828b98;
+  --text-tertiary: #545d69;
+  --accent: #37b4ff;
+  --accent-hover: #6cc9ff;
+  --accent-deep: #1d7fd6;
   --like: #f91880;
   --repost: #00ba7c;
-  --bookmark: #1d9bf0;
+  --bookmark: #37b4ff;
   --sidebar-width: 280px;
   --header-height: 53px;
+  /* Matches the radius handed to apply_vibrancy in lib.rs. If the two drift
+     apart, the material shows as a crescent outside the content's corner. */
+  --window-radius: 14px;
+
+  /* ── Glass tokens ──────────────────────────────────────────────────────────
+     Real glass reads as glass because of its edge, not its transparency: a
+     bright specular line where light catches the top rim, a dimmer one at the
+     bottom, and a soft shadow underneath. --rim carries that; every raised
+     surface takes it. */
+  /* Two kinds of glass, and the difference matters over vibrancy. Panels tint
+     the material *darker* — a white fill over a bright desktop composites to
+     grey, which is what kept washing the app out. Things that sit on top of a
+     panel lift with white, because they need to be lighter than their parent. */
+  --glass: rgba(255, 255, 255, 0.05);
+  --glass-raised: rgba(255, 255, 255, 0.085);
+  --glass-panel: rgba(11, 14, 19, 0.72);
+  /* Menus and popovers overlap content, so they get a floor of their own. At
+     0.9 the high-contrast text underneath still ghosted through and made the
+     menu hard to read; a menu is worth a little less transparency. */
+  --glass-overlay: rgba(10, 12, 17, 0.985);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-blur: blur(30px) saturate(180%);
+  --glass-blur-soft: blur(18px) saturate(160%);
+
+  --rim: inset 0 1px 0 rgba(255, 255, 255, 0.2), inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  --rim-strong: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.07);
+  --glass-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  --accent-gradient: linear-gradient(135deg, var(--logo-blue) 0%, var(--logo-blue-deep) 100%);
 }
 
 body {
@@ -26,20 +152,49 @@ body {
   min-height: 100vh;
 }
 
+/* The themed backdrop every glass surface sits on: ink base with blue bloom
+   in the corners, mirroring the icon's gradient. Its own layer rather than a
+   `background` on body so glass mode can dial it back and let the real macOS
+   material through underneath. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    /* One cool highlight, barely there — enough that the black isn't dead, not
+       enough to call the app blue. */
+    radial-gradient(1000px 640px at 6% -14%, rgba(90, 170, 235, 0.06), transparent 58%),
+    radial-gradient(900px 600px at 104% 4%, rgba(255, 255, 255, 0.025), transparent 55%),
+    /* The icon's own gradient, top to bottom. */
+    linear-gradient(168deg, var(--grey-700) 0%, var(--grey-800) 42%, var(--grey-900) 100%);
+}
+
 /* ── Layout ── */
+/* The window is the frame, not the document. The page itself never scrolls —
+   the layout is exactly one viewport tall and the middle column scrolls inside
+   it, so the sidebar and right panel stay put no matter how far down the feed
+   you are.
+
+   `position: sticky` used to do this and stopped working the moment the glass
+   treatment put `overflow: hidden` on .layout for the rounded corners: that
+   makes .layout the scrollport for its sticky children, and a scrollport that
+   cannot scroll never triggers them. Owning the scroll here is sturdier than
+   depending on no ancestor ever clipping again. */
 .layout {
   display: flex;
-  max-width: 1280px;
-  margin: 0 auto;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* ── Sidebar ── */
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  height: 100vh;
+  height: 100%;
+  /* Its own scroll, for when the folder list outgrows the window. */
   overflow-y: auto;
   border-right: 1px solid var(--border);
   padding: 16px 0;
@@ -123,8 +278,10 @@ body {
 .sidebar-bottom {
   position: sticky;
   bottom: 0;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
+  background: var(--glass-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--glass-border);
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
@@ -136,17 +293,24 @@ body {
   gap: 9px;
   padding: 9px 14px;
   border-radius: 9999px;
-  border: 1px solid var(--border);
-  background: transparent;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-raised);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  box-shadow: var(--rim-strong);
   color: var(--text-primary);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   width: 100%;
   text-align: left;
 }
-.action-btn:hover { background: var(--bg-elevated); border-color: var(--text-secondary); }
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.26);
+  box-shadow: var(--rim-strong), 0 6px 20px rgba(0, 0, 0, 0.4);
+}
 .action-btn.running { border-color: var(--accent); color: var(--accent); cursor: default; }
 .action-btn.done { border-color: var(--repost); color: var(--repost); }
 .action-btn.error { border-color: var(--like); color: var(--like); }
@@ -159,6 +323,16 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Progress is one short line and truncates harmlessly. A failure is a sentence
+   naming the cause and a sentence naming the fix — ellipsised to one line, it
+   says nothing at all — so errors wrap and keep their full text. */
+.action-status.error {
+  white-space: normal;
+  overflow: visible;
+  color: var(--like);
+  line-height: 1.45;
+}
 @keyframes rotate { to { transform: rotate(360deg); } }
 .spin { animation: rotate 1s linear infinite; }
 
@@ -166,9 +340,22 @@ body {
 .main {
   flex: 1;
   min-width: 0;
-  border-right: 1px solid var(--border);
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--glass-border);
+  border-left: 1px solid var(--glass-border);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+
+/* One pane of glass for the whole column rather than one per card: thirty
+   stacked backdrop-filters is a real cost on every scroll frame, and the cards
+   only need to be separated, not individually floated. */
+.feed {
+  background: var(--glass-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 /* ── Header ── */
@@ -176,10 +363,10 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(0,0,0,0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
+  background: var(--glass-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border);
   height: var(--header-height);
   display: flex;
   align-items: center;
@@ -210,7 +397,7 @@ body {
   transition: border-color 0.15s, background 0.15s;
 }
 .search-input::placeholder { color: var(--text-secondary); }
-.search-input:focus { border-color: var(--accent); background: var(--bg); }
+.search-input:focus { border-color: var(--accent); background: var(--glass-raised); box-shadow: 0 0 0 3px rgba(55,180,255,0.13); }
 .search-clear {
   position: absolute; right: 10px; top: 50%;
   transform: translateY(-50%);
@@ -255,7 +442,7 @@ body {
 /* ── Tweet Card ── */
 .tweet-card {
   display: flex; padding: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--glass-border);
   cursor: default;
   transition: background 0.1s;
   gap: 12px;
@@ -263,6 +450,67 @@ body {
   position: relative;
 }
 .tweet-card:hover { background: var(--bg-hover); }
+
+/* ── Leaving the feed ──────────────────────────────────────────────────────
+   A card that drops out of the view you are in — marked read under Unread
+   Only, unstarred inside a favourites folder, pulled out of the category you
+   filtered by — dissolves in its own slot before the feed closes over it.
+   Slow enough to see which one went, so an accidental click is obvious.
+
+   The work is split across two elements on purpose. The slot animates height
+   and nothing else; the card animates opacity and transform and nothing else.
+   Height is a layout property, and .feed carries a backdrop-filter, so every
+   frame of a collapse re-resolves layout and re-composites the glass behind
+   it. Opacity and transform never leave the compositor. Run together on one
+   element — as they were — the cheap half is pinned to the frame rate of the
+   expensive half, and the whole thing judders.
+
+   --vanish-h is the slot's measured height, set by Feed just before the
+   animation starts; cards are all different sizes and the collapse needs a
+   real number to shrink from. */
+.tweet-slot.is-vanishing {
+  overflow: hidden;
+  pointer-events: none;
+  /* Starts after the fade is underway, so the gap never sits open and empty —
+     the pause between "gone" and "closed" was most of what read as a stutter. */
+  animation: slot-collapse 400ms cubic-bezier(0.4, 0, 0.2, 1) 130ms forwards;
+  will-change: max-height;
+  contain: layout paint;
+}
+@keyframes slot-collapse {
+  from { max-height: var(--vanish-h, 420px); }
+  to   { max-height: 0; }
+}
+
+/* No blur here. It was the single most expensive property in the old keyframes
+   — a full-card repaint every frame, stacked on top of the feed's own
+   backdrop-filter — and against frosted glass it read as smear rather than
+   dissolve. Fade and drift carry the same meaning for free. */
+.tweet-slot.is-vanishing .tweet-card {
+  animation: card-dissolve 250ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: opacity, transform;
+}
+@keyframes card-dissolve {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateX(14px) scale(0.985); }
+}
+
+/* Padding and border-width used to be animated alongside the height. Under the
+   global border-box they were always redundant — max-height:0 already collapses
+   a card's padding — so they only ever added layout cost per frame. */
+
+@media (prefers-reduced-motion: reduce) {
+  .tweet-slot.is-vanishing {
+    animation: slot-collapse 220ms ease 80ms forwards;
+  }
+  .tweet-slot.is-vanishing .tweet-card {
+    animation: card-fade-plain 140ms linear forwards;
+  }
+  @keyframes card-fade-plain {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+  }
+}
 
 .tweet-avatar {
   flex-shrink: 0; width: 40px; height: 40px;
@@ -298,7 +546,7 @@ body {
   white-space: pre-wrap; word-break: break-word;
 }
 .tweet-text .highlight {
-  background: rgba(29,155,240,0.25); border-radius: 3px; padding: 0 1px;
+  background: rgba(55,180,255,0.25); border-radius: 3px; padding: 0 1px;
 }
 
 .tweet-categories { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -343,7 +591,9 @@ body {
 .fav-popup {
   position: absolute;
   top: calc(100% + 6px); right: 0;
-  background: #1a1a1a; border: 1px solid var(--border);
+  background: var(--glass-overlay); border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
   border-radius: 14px; padding: 8px;
   z-index: 9999; min-width: 210px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.7);
@@ -354,6 +604,9 @@ body {
   color: var(--text-secondary); padding: 4px 8px 10px;
 }
 .star-wrap { position: relative; display: inline-flex; }
+/* Portalled to <body> and placed from the trigger's rect, so the chat's
+   scrolling result list cannot clip it. */
+.fav-popup-fixed { position: fixed; top: 0; left: 0; right: auto; }
 .fav-popup-folder {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px; border-radius: 8px;
@@ -364,10 +617,36 @@ body {
 .fav-folder-check {
   display: flex; align-items: center; gap: 9px;
   flex: 1; min-width: 0; cursor: pointer; user-select: none;
+  background: none; border: none; padding: 0; margin: 0;
+  font: inherit; color: inherit; text-align: left;
 }
-.fav-folder-check input[type="checkbox"] {
-  width: 15px; height: 15px; accent-color: #f59e0b; cursor: pointer; flex-shrink: 0;
+/* Drawn rather than a native checkbox: the real input had to be nested in a
+   label to be clickable, and that nesting double-fired the toggle. */
+.fav-check-box {
+  width: 15px; height: 15px; flex-shrink: 0; border-radius: 4px;
+  border: 1.5px solid var(--text-tertiary); background: transparent;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: transparent; transition: background 0.1s, border-color 0.1s, color 0.1s;
 }
+.fav-check-box.checked { background: #f59e0b; border-color: #f59e0b; color: #000; }
+
+.fav-popup-search {
+  width: 100%; padding: 6px 10px; margin-bottom: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-primary); font-size: 13px; outline: none;
+  transition: border-color 0.15s;
+}
+.fav-popup-search:focus { border-color: var(--accent); }
+.fav-popup-search::placeholder { color: var(--text-tertiary); }
+.fav-popup-list {
+  max-height: 260px; overflow-y: auto;
+  /* Reaching the end of the list must not hand the wheel to the feed behind,
+     which would slide the popup away from under the pointer. */
+  overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.fav-popup-empty { padding: 8px; font-size: 13px; color: var(--text-secondary); }
 .fav-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fav-rename-btn {
   background: none; border: none; color: var(--text-tertiary);
@@ -378,7 +657,7 @@ body {
 .fav-rename-btn:hover { color: var(--accent); background: rgba(255,255,255,0.06); }
 .fav-rename-input {
   flex: 1; min-width: 0; padding: 4px 8px;
-  background: var(--bg); border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--glass-raised); border: 1px solid var(--accent); border-radius: 6px;
   color: var(--text-primary); font-size: 14px; outline: none;
 }
 .fav-popup-divider { height: 1px; background: var(--border); margin: 6px 0; }
@@ -434,12 +713,12 @@ body {
 .cat-chip {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px; border-radius: 20px;
-  background: rgba(29,155,240,0.12); color: var(--accent);
+  background: rgba(55,180,255,0.12); color: var(--accent);
   font-size: 12px; font-weight: 500;
-  border: 1px solid rgba(29,155,240,0.3);
+  border: 1px solid rgba(55,180,255,0.3);
   cursor: pointer; transition: background 0.1s;
 }
-.cat-chip:hover { background: rgba(29,155,240,0.22); }
+.cat-chip:hover { background: rgba(55,180,255,0.22); }
 .cat-chip-x { font-size: 11px; opacity: 0.7; }
 .cat-clear-all {
   font-size: 11px; color: var(--text-secondary);
@@ -464,6 +743,10 @@ body {
   padding: 1px 7px; min-width: 28px; text-align: center;
 }
 .sidebar-fav-item.active .fav-badge { background: #f59e0b; color: #000; border-color: #f59e0b; }
+.fav-list {
+  max-height: 240px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
 
 /* ── View on X ── */
 .view-on-x {
@@ -489,35 +772,68 @@ body {
 /* ── Right panel ── */
 .right-panel {
   width: 320px; flex-shrink: 0; padding: 16px;
-  position: sticky; top: 0; height: 100vh;
+  height: 100%;
   overflow-y: auto; scrollbar-width: none;
 }
 .right-panel::-webkit-scrollbar { display: none; }
 .panel-card {
-  background: var(--bg-elevated); border: 1px solid var(--border);
-  border-radius: 16px; padding: 16px; margin-bottom: 16px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  box-shadow: var(--rim), var(--glass-shadow);
+  border-radius: 18px; padding: 16px; margin-bottom: 16px;
 }
 /* .panel-card-title extended below with flex layout */
+/* Rows sit in their own rounded slot rather than being separated by rules, so
+   that selecting one can light up a pill instead of painting a full-bleed
+   rectangle across the card. The hairline between rows is drawn as a pseudo
+   element and pulled out around the selected row, which owns its own edges. */
 .top-author {
+  position: relative;
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 0; border-bottom: 1px solid var(--border);
-  cursor: pointer; transition: opacity 0.1s;
+  padding: 8px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
 }
-.top-author:last-child { border-bottom: none; }
-.top-author:hover { opacity: 0.8; }
-.top-author.active { background: rgba(29,155,240,0.08); }
+.top-author + .top-author::before {
+  content: ''; position: absolute; left: 10px; right: 10px; top: 0;
+  border-top: 1px solid var(--border);
+  transition: opacity 0.18s ease;
+}
+.top-author:hover { background: var(--bg-hover); }
+.top-author.active {
+  background: linear-gradient(90deg, rgba(55,180,255,0.18), rgba(55,180,255,0.05));
+  box-shadow: inset 0 0 0 1px rgba(55,180,255,0.38);
+}
+.top-author.active::before,
+.top-author.active + .top-author::before { opacity: 0; }
+.top-author.active .top-author-avatar {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px rgba(55,180,255,0.18);
+}
 .top-author.active .top-author-name,
 .top-author.active .top-author-handle { color: var(--accent); }
+/* The count doubles as the way out of the filter once a voice is selected. */
+.top-author.active .top-author-count {
+  background: var(--accent); color: #05121c;
+  border-radius: 20px; padding: 1px 8px; font-size: 12px;
+}
 .top-author-avatar {
   width: 36px; height: 36px; border-radius: 50%;
   background: var(--border); overflow: hidden; flex-shrink: 0;
 }
 .top-author-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.voices-list { max-height: 420px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+/* Pulled out past the card's padding so a selected row's pill can breathe
+   sideways while its text still lines up under the card title. */
+.voices-list {
+  max-height: 420px; overflow-y: auto; overflow-x: hidden; margin: 0 -10px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
 .top-author-info { flex: 1; min-width: 0; }
-.top-author-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.top-author-handle { font-size: 13px; color: var(--text-secondary); }
-.top-author-count { font-size: 13px; font-weight: 600; color: var(--accent); }
+.top-author-name { display: block; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-author-handle { display: block; font-size: 13px; color: var(--text-secondary); }
+.top-author-count { font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0; }
 
 /* ── Pagination ── */
 .pagination {
@@ -546,7 +862,7 @@ body {
 .tweet-card.is-read .tweet-avatar { opacity: 0.4; }
 
 /* ── Category colors ── */
-.cat-technology { color: #1d9bf0; border-color: rgba(29,155,240,0.4); background: rgba(29,155,240,0.08); }
+.cat-technology { color: #1d9bf0; border-color: rgba(55,180,255,0.4); background: rgba(55,180,255,0.08); }
 .cat-ai         { color: #a855f7; border-color: rgba(168,85,247,0.4); background: rgba(168,85,247,0.08); }
 .cat-business   { color: #f59e0b; border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
 .cat-science    { color: #10b981; border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.08); }
@@ -565,7 +881,9 @@ body {
 .mode-container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* Fills the column rather than the viewport: .main owns the height now, and
+     in popup mode the two are not the same number. */
+  height: 100%;
   overflow: hidden;
 }
 .mode-topbar {
@@ -574,10 +892,11 @@ body {
   gap: 14px;
   padding: 0 20px;
   height: var(--header-height);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
-  background: rgba(0,0,0,0.85);
-  backdrop-filter: blur(12px);
+  background: var(--glass-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -637,9 +956,12 @@ body {
 }
 .chat-chip-item {
   padding: 12px 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
-  background: var(--bg-elevated);
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  box-shadow: var(--rim);
   color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
@@ -647,13 +969,19 @@ body {
   line-height: 1.4;
   transition: all 0.15s;
 }
-.chat-chip-item:hover { border-color: var(--accent); background: rgba(29,155,240,0.06); }
+.chat-chip-item:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow: var(--rim-strong), 0 6px 20px rgba(0, 0, 0, 0.36);
+}
 .chat-surprise-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: none;
-  border: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  border: 1px solid var(--glass-border);
   color: var(--text-secondary);
   font-size: 14px;
   padding: 9px 20px;
@@ -675,7 +1003,8 @@ body {
 .chat-message { display: flex; flex-direction: column; }
 .chat-message.user { align-items: flex-end; }
 .chat-bubble.user {
-  background: var(--accent);
+  background: var(--accent-gradient);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   color: #fff;
   padding: 10px 16px;
   border-radius: 18px 18px 4px 18px;
@@ -687,8 +1016,8 @@ body {
 .chat-assistant-icon {
   width: 28px; height: 28px;
   border-radius: 50%;
-  background: rgba(29,155,240,0.12);
-  border: 1px solid rgba(29,155,240,0.2);
+  background: rgba(55,180,255,0.12);
+  border: 1px solid rgba(55,180,255,0.2);
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   color: var(--accent);
@@ -707,22 +1036,102 @@ body {
 .chat-typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes typingPulse { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
 
-.chat-bookmark-card {
-  display: block;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
-  text-decoration: none;
-  color: inherit;
-  background: var(--bg-elevated);
-  transition: border-color 0.15s;
+/* ── Chat results: the tweets behind an answer ────────────────────────────────
+   An answer that says "you bookmarked a lot about agents" is only half useful
+   without the bookmarks themselves, so every reply carries the ones it drew on
+   as real tweet cards. The list scrolls inside the message rather than pushing
+   the conversation down. */
+.chat-results {
+  margin-top: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  box-shadow: var(--rim);
+  overflow: hidden;
 }
-.chat-bookmark-card:hover { border-color: var(--accent); }
-.chat-bookmark-author { font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
-.chat-bookmark-text { font-size: 13px; line-height: 1.5; color: var(--text-primary); margin-bottom: 6px; }
-.chat-bookmark-meta { display: flex; gap: 10px; font-size: 11px; color: var(--text-secondary); flex-wrap: wrap; }
-.chat-bookmark-cat { background: rgba(29,155,240,0.1); color: var(--accent); padding: 1px 7px; border-radius: 20px; }
+.chat-results-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.7px; text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.chat-results-count { color: var(--accent); }
+.chat-results-hint { margin-left: auto; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.chat-results-scroll {
+  max-height: 430px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  overscroll-behavior: contain;
+}
+.chat-results-scroll::-webkit-scrollbar { width: 8px; }
+.chat-results-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+.chat-tweet {
+  display: flex; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  transition: background 0.12s;
+}
+.chat-tweet:last-child { border-bottom: none; }
+.chat-tweet:hover { background: var(--bg-hover); }
+.chat-tweet-avatar {
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 50%; overflow: hidden;
+  background: var(--glass-raised);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: var(--text-secondary);
+}
+.chat-tweet-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.chat-tweet-body { flex: 1; min-width: 0; }
+.chat-tweet-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.chat-tweet-name { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.chat-tweet-handle { font-size: 13px; color: var(--text-secondary); }
+.chat-tweet-date { font-size: 12px; color: var(--text-secondary); margin-left: auto; flex-shrink: 0; }
+.chat-tweet-text {
+  font-size: 14px; line-height: 1.5;
+  color: var(--text-primary);
+  margin-top: 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-tweet-more {
+  background: none; border: none; padding: 0; margin-top: 4px;
+  color: var(--accent); font-size: 12px; cursor: pointer;
+}
+.chat-tweet-more:hover { text-decoration: underline; }
+.chat-tweet-foot {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 12px; color: var(--text-secondary);
+}
+.chat-tweet-stat { display: flex; align-items: center; gap: 4px; }
+.chat-tweet-stat svg { width: 13px; height: 13px; opacity: 0.75; }
+.chat-tweet-cat {
+  background: rgba(55, 180, 255, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(55, 180, 255, 0.22);
+  padding: 1px 8px; border-radius: 20px;
+  font-size: 11px;
+}
+.chat-tweet-view {
+  margin-left: auto;
+  color: var(--accent); text-decoration: none; font-weight: 600;
+}
+.chat-tweet-view:hover { text-decoration: underline; }
+.chat-tweet-fav { display: inline-flex; margin-left: auto; }
+.chat-tweet-star {
+  background: none; border: none; padding: 2px; cursor: pointer;
+  color: var(--text-secondary); display: inline-flex; border-radius: 6px;
+  transition: color 0.12s, background 0.12s;
+}
+.chat-tweet-star svg { width: 15px; height: 15px; }
+.chat-tweet-star:hover { color: #f59e0b; background: rgba(245,158,11,0.12); }
+.chat-tweet-star.active { color: #f59e0b; }
 
 .chat-authors-list { display: flex; flex-direction: column; gap: 2px; }
 .chat-author-row {
@@ -739,28 +1148,35 @@ body {
   display: flex;
   gap: 8px;
   padding: 14px 20px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
+  border-top: 1px solid var(--glass-border);
+  background: var(--glass-panel);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   flex-shrink: 0;
 }
 .chat-input {
   flex: 1;
   height: 42px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  background: var(--glass-raised);
+  backdrop-filter: var(--glass-blur-soft);
+  -webkit-backdrop-filter: var(--glass-blur-soft);
+  border: 1px solid var(--glass-border);
   border-radius: 9999px;
   padding: 0 18px;
   font-size: 14px;
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.chat-input:focus { border-color: var(--accent); }
+.chat-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(55, 180, 255, 0.14);
+}
 .chat-input::placeholder { color: var(--text-secondary); }
 .chat-send-btn {
   width: 42px; height: 42px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-gradient);
   border: none;
   color: #fff;
   cursor: pointer;
@@ -799,7 +1215,7 @@ body {
   transition: all 0.15s;
 }
 .stats-month-cell:hover { border-color: var(--text-secondary); }
-.stats-month-cell.active { border-color: var(--accent); background: rgba(29,155,240,0.06); }
+.stats-month-cell.active { border-color: var(--accent); background: rgba(55,180,255,0.06); }
 .stats-month-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
 .stats-month-count { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
 .stats-month-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
@@ -824,7 +1240,7 @@ body {
 }
 .stats-detail-close:hover { color: var(--text-primary); }
 .stats-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.stats-detail-card { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.stats-detail-card { background: var(--glass); border: 1px solid var(--glass-border); backdrop-filter: var(--glass-blur-soft); -webkit-backdrop-filter: var(--glass-blur-soft); border-radius: 10px; padding: 12px 14px; }
 .stats-detail-card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-secondary); margin-bottom: 8px; }
 .stats-detail-row { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; font-size: 13px; }
 .stats-detail-label { color: var(--text-primary); }
@@ -876,7 +1292,7 @@ body {
   text-align: left;
 }
 .podcast-provider-card:hover { border-color: var(--text-secondary); }
-.podcast-provider-card.selected { border-color: var(--accent); background: rgba(29,155,240,0.06); }
+.podcast-provider-card.selected { border-color: var(--accent); background: rgba(55,180,255,0.06); }
 .podcast-provider-icon { font-size: 22px; flex-shrink: 0; }
 .podcast-provider-info { flex: 1; }
 .podcast-provider-name { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
@@ -925,7 +1341,7 @@ body {
   cursor: pointer; transition: all 0.15s;
 }
 .podcast-segment:hover { background: var(--bg-elevated); border-color: var(--border); }
-.podcast-segment.active { background: rgba(29,155,240,0.07); border-color: var(--accent); }
+.podcast-segment.active { background: rgba(55,180,255,0.07); border-color: var(--accent); }
 .podcast-seg-num { font-size: 12px; color: var(--text-tertiary); min-width: 20px; padding-top: 1px; }
 .podcast-seg-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; flex: 1; }
 .podcast-segment.active .podcast-seg-text { color: var(--text-primary); }
@@ -944,7 +1360,7 @@ body {
   border-radius: 24px;
   padding: 18px 20px 14px;
   width: 260px;
-  box-shadow: 0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(29,155,240,0.1);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(55,180,255,0.1);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -966,15 +1382,15 @@ body {
 .voice-orb-wrap { position: relative; width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; }
 .voice-orb {
   width: 48px; height: 48px; border-radius: 50%;
-  background: radial-gradient(circle at 40% 35%, rgba(29,155,240,0.9), rgba(29,155,240,0.3));
+  background: radial-gradient(circle at 40% 35%, rgba(55,180,255,0.9), rgba(55,180,255,0.3));
   display: flex; align-items: center; justify-content: center;
   position: relative;
-  box-shadow: 0 0 20px rgba(29,155,240,0.3);
+  box-shadow: 0 0 20px rgba(55,180,255,0.3);
   transition: box-shadow 0.3s;
 }
 .voice-orb.active {
   animation: orbPulse 1.8s ease-in-out infinite;
-  box-shadow: 0 0 32px rgba(29,155,240,0.5);
+  box-shadow: 0 0 32px rgba(55,180,255,0.5);
 }
 @keyframes orbPulse {
   0%, 100% { transform: scale(1); }
@@ -986,13 +1402,13 @@ body {
 }
 .voice-orb-ring {
   position: absolute; inset: -6px; border-radius: 50%;
-  border: 1px solid rgba(29,155,240,0.3);
+  border: 1px solid rgba(55,180,255,0.3);
   animation: ringExpand 2s ease-out infinite;
 }
 .voice-orb-ring.ring2 {
   inset: -12px;
   animation-delay: 0.7s;
-  border-color: rgba(29,155,240,0.15);
+  border-color: rgba(55,180,255,0.15);
 }
 @keyframes ringExpand {
   0%   { opacity: 1; transform: scale(0.9); }
@@ -1030,7 +1446,11 @@ body {
 .voice-ctrl-btn:hover { background: rgba(255,255,255,0.12); }
 
 /* ── Profile menu in right panel ── */
-.profile-card { padding: 0 !important; overflow: visible; position: relative; }
+/* The z-index is load-bearing. `backdrop-filter` makes every .panel-card its
+   own stacking context, so without it the cards below this one paint over the
+   menu that drops out of it — the menu shows as a ghost through the glass
+   instead of on top of it. */
+.profile-card { padding: 0 !important; overflow: visible; position: relative; z-index: 30; }
 .profile-btn {
   display: flex; align-items: center; gap: 10px;
   width: 100%; padding: 12px 14px;
@@ -1053,8 +1473,10 @@ body {
   position: absolute;
   top: calc(100% + 6px);
   left: 0; right: 0;
-  background: #141414;
-  border: 1px solid var(--border);
+  background: var(--glass-overlay);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: 14px;
   padding: 6px;
   z-index: 9999;
@@ -1080,8 +1502,29 @@ body {
 .profile-menu-info { flex: 1; }
 .profile-menu-label { font-size: 13px; font-weight: 600; }
 .profile-menu-desc { font-size: 11px; color: var(--text-tertiary); margin-top: 1px; }
+.profile-menu-kbd {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  line-height: 1.5;
+}
 
 /* ── Responsive ── */
+/* The layout is full-bleed, so on a wide window the columns grow with it rather
+   than leaving the feed to stretch alone. */
+@media (min-width: 1500px) {
+  :root { --sidebar-width: 310px; }
+  .right-panel { width: 370px; }
+}
+@media (min-width: 1900px) {
+  :root { --sidebar-width: 340px; }
+  .right-panel { width: 410px; }
+  .tweet-text, .tweet-header { max-width: 1000px; }
+}
 @media (max-width: 1100px) { .right-panel { display: none; } }
 @media (max-width: 700px) {
   .sidebar { display: none; }
@@ -1124,19 +1567,13 @@ kbd {
   border-radius: 3px; padding: 1px 4px; color: var(--text-secondary);
 }
 
-/* ── Forgotten Gems badge ── */
-.gems-badge {
-  font-size: 12px; background: rgba(168,85,247,0.12); color: #a855f7;
-  border: 1px solid rgba(168,85,247,0.3); border-radius: 20px;
-  padding: 1px 7px; min-width: 28px; text-align: center;
-}
-.sidebar-item.active .gems-badge { background: #a855f7; color: #fff; border-color: #a855f7; }
-
 /* ── Color label ── */
 .label-popup {
   position: absolute;
   top: calc(100% + 6px); right: 0;
-  background: #1a1a1a; border: 1px solid var(--border);
+  background: var(--glass-overlay); border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
   border-radius: 14px; padding: 10px 12px;
   z-index: 9999; min-width: 180px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.7);
@@ -1168,7 +1605,9 @@ kbd {
 .note-popup {
   position: absolute;
   top: calc(100% + 6px); right: 0;
-  background: #1a1a1a; border: 1px solid var(--border);
+  background: var(--glass-overlay); border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
   border-radius: 14px; padding: 12px;
   z-index: 9999; min-width: 260px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.7);
@@ -1220,8 +1659,8 @@ kbd {
 
 /* ── Focused card ── */
 .tweet-card.is-focused {
-  background: rgba(29,155,240,0.04);
-  outline: 1px solid rgba(29,155,240,0.2);
+  background: rgba(55,180,255,0.04);
+  outline: 1px solid rgba(55,180,255,0.2);
   outline-offset: -1px;
 }
 .tweet-card.is-focused .tweet-card-actions { opacity: 1; }
@@ -1246,7 +1685,7 @@ kbd {
   font-size: 12px; font-weight: 600; cursor: pointer;
   transition: all 0.15s;
 }
-.bulk-read-btn:hover { background: rgba(29,155,240,0.08); border-color: var(--accent); }
+.bulk-read-btn:hover { background: rgba(55,180,255,0.08); border-color: var(--accent); }
 
 /* ── Voice header button ── */
 .voice-header-btn {
@@ -1258,8 +1697,8 @@ kbd {
   transition: all 0.15s; white-space: nowrap;
 }
 .voice-header-btn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
-.voice-header-btn.configured { border-color: rgba(29,155,240,0.5); color: var(--accent); }
-.voice-header-btn.playing { background: rgba(29,155,240,0.1); border-color: var(--accent); color: var(--accent); }
+.voice-header-btn.configured { border-color: rgba(55,180,255,0.5); color: var(--accent); }
+.voice-header-btn.playing { background: rgba(55,180,255,0.1); border-color: var(--accent); color: var(--accent); }
 
 .voice-setup-dot {
   position: absolute; top: -4px; right: -4px;
@@ -1275,7 +1714,9 @@ kbd {
 .voice-setup-panel {
   position: absolute;
   top: calc(100% + 10px); right: 0;
-  background: #141414; border: 1px solid var(--border);
+  background: var(--glass-overlay); border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
   border-radius: 18px; padding: 18px;
   z-index: 99999; width: 320px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.7);
@@ -1295,7 +1736,7 @@ kbd {
 .voice-setup-badge {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 14px; border-radius: 9999px;
-  background: rgba(29,155,240,0.1); border: 1px solid rgba(29,155,240,0.3);
+  background: rgba(55,180,255,0.1); border: 1px solid rgba(55,180,255,0.3);
   color: var(--accent); font-size: 13px; font-weight: 600;
 }
 .voice-setup-play-btn {
@@ -1316,7 +1757,7 @@ kbd {
   transition: all 0.15s;
 }
 .voice-provider-chip:hover { border-color: var(--text-secondary); color: var(--text-primary); }
-.voice-provider-chip.active { border-color: var(--accent); background: rgba(29,155,240,0.08); color: var(--text-primary); font-weight: 600; }
+.voice-provider-chip.active { border-color: var(--accent); background: rgba(55,180,255,0.08); color: var(--text-primary); font-weight: 600; }
 
 .voice-key-input {
   width: 100%; padding: 9px 12px; margin-bottom: 8px;
@@ -1365,12 +1806,17 @@ kbd {
 .sync-backend-item {
   display: flex; flex-direction: column; gap: 2px;
   padding: 8px 10px; border-radius: 9px;
-  border: 1px solid var(--border); background: none;
+  border: 1px solid var(--glass-border); background: var(--glass);
+  backdrop-filter: var(--glass-blur-soft); -webkit-backdrop-filter: var(--glass-blur-soft);
   color: var(--text-primary); font-size: 13px; cursor: pointer;
   text-align: left; transition: all 0.15s;
 }
-.sync-backend-item:hover { border-color: var(--text-secondary); }
-.sync-backend-item.active { border-color: var(--accent); background: rgba(29,155,240,0.08); font-weight: 600; }
+.sync-backend-item:hover { border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.07); }
+.sync-backend-item.active {
+  border-color: rgba(55,180,255,0.5);
+  background: rgba(255,255,255,0.09);
+  font-weight: 600;
+}
 .sync-backend-hint { font-size: 11px; color: var(--text-tertiary); font-weight: 400; }
 
 /* ── Source picker ── */
@@ -1381,8 +1827,8 @@ kbd {
 .source-caps { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 12px; }
 .source-cap-chip {
   font-size: 10px; padding: 2px 7px; border-radius: 999px;
-  background: rgba(29,155,240,0.10); color: var(--accent);
-  border: 1px solid rgba(29,155,240,0.25);
+  background: rgba(55,180,255,0.10); color: var(--accent);
+  border: 1px solid rgba(55,180,255,0.25);
 }
 
 /* ── Source-gated tools in profile menu ── */
@@ -1400,6 +1846,12 @@ kbd {
 .profile-menu-item.locked { opacity: 0.45; cursor: not-allowed; }
 .profile-menu-item.locked:hover { background: none; }
 
+/* Log out. Quiet at rest — it isn't destructive and shouldn't shout — and
+   only warms up under the cursor, once you've clearly aimed at it. */
+.profile-menu-item.danger { color: var(--text-secondary); }
+.profile-menu-item.danger:hover { color: #ff8f7a; background: rgba(255, 143, 122, 0.08); }
+.profile-menu-item.danger:hover .profile-menu-icon { color: #ff8f7a; }
+
 /* ── birdclaw feature panel (likes / inbox / digests) ── */
 .bc-panel { max-width: 680px; margin: 0 auto; padding: 24px 20px 80px; }
 .bc-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
@@ -1416,7 +1868,7 @@ kbd {
   padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
   background: none; color: var(--text-secondary); font-size: 13px; cursor: pointer;
 }
-.bc-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(29,155,240,0.08); }
+.bc-tab.active { border-color: var(--accent); color: var(--accent); background: rgba(55,180,255,0.08); }
 
 .bc-state { padding: 40px 16px; text-align: center; color: var(--text-tertiary); font-size: 14px; }
 .bc-error { color: #f4655f; }
@@ -1440,7 +1892,7 @@ kbd {
 .bc-handle { color: var(--text-tertiary); font-size: 13px; }
 .bc-score {
   margin-left: auto; font-size: 11px; font-weight: 700; color: var(--accent);
-  background: rgba(29,155,240,0.10); border: 1px solid rgba(29,155,240,0.25);
+  background: rgba(55,180,255,0.10); border: 1px solid rgba(55,180,255,0.25);
   padding: 1px 8px; border-radius: 999px;
 }
 .bc-text { font-size: 14px; line-height: 1.5; margin: 3px 0; white-space: pre-wrap; word-break: break-word; }
@@ -1466,17 +1918,22 @@ kbd {
 }
 .chat-backend-pill {
   padding: 5px 14px; border-radius: 9999px;
-  border: 1px solid var(--border); background: none;
+  border: 1px solid var(--glass-border); background: var(--glass);
+  backdrop-filter: var(--glass-blur-soft); -webkit-backdrop-filter: var(--glass-blur-soft);
   color: var(--text-secondary); font-size: 13px; cursor: pointer;
   transition: all 0.15s;
 }
-.chat-backend-pill:hover { border-color: var(--text-secondary); color: var(--text-primary); }
-.chat-backend-pill.active { border-color: var(--accent); background: rgba(29,155,240,0.1); color: var(--text-primary); font-weight: 600; }
+.chat-backend-pill:hover { border-color: rgba(255,255,255,0.24); color: var(--text-primary); }
+.chat-backend-pill.active {
+  border-color: rgba(55,180,255,0.5);
+  background: rgba(255,255,255,0.09);
+  color: var(--text-primary); font-weight: 600;
+}
 
 /* ── Chat backend badge ── */
 .chat-backend-badge {
   font-size: 11px; padding: 3px 9px; border-radius: 9999px;
-  background: rgba(29,155,240,0.1); border: 1px solid rgba(29,155,240,0.2);
+  background: rgba(55,180,255,0.1); border: 1px solid rgba(55,180,255,0.2);
   color: var(--accent); white-space: nowrap; flex-shrink: 0;
 }
 
@@ -1516,7 +1973,7 @@ kbd {
   transition: all 0.15s;
 }
 .podcast-source-tab:hover { border-color: var(--text-secondary); color: var(--text-primary); }
-.podcast-source-tab.active { border-color: var(--accent); background: rgba(29,155,240,0.1); color: var(--text-primary); font-weight: 600; }
+.podcast-source-tab.active { border-color: var(--accent); background: rgba(55,180,255,0.1); color: var(--text-primary); font-weight: 600; }
 .podcast-source-config { margin-bottom: 8px; }
 .podcast-count-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .podcast-count-slider { flex: 1; accent-color: var(--accent); }
@@ -1543,10 +2000,10 @@ kbd {
 .podcast-gen-icon { font-size: 32px; position: relative; z-index: 2; }
 .podcast-gen-ring {
   position: absolute; inset: 0; border-radius: 50%;
-  border: 2px solid rgba(29,155,240,0.4);
+  border: 2px solid rgba(55,180,255,0.4);
   animation: ringExpand 2s ease-out infinite;
 }
-.podcast-gen-ring.r2 { animation-delay: 0.8s; border-color: rgba(29,155,240,0.2); }
+.podcast-gen-ring.r2 { animation-delay: 0.8s; border-color: rgba(55,180,255,0.2); }
 .podcast-gen-label { font-size: 15px; color: var(--text-secondary); }
 .podcast-gen-preview {
   max-width: 520px; width: 100%;
@@ -1655,7 +2112,7 @@ kbd {
   transition: all 0.15s; flex-shrink: 0;
 }
 .chat-sys-btn:hover { border-color: var(--text-secondary); color: var(--text-primary); }
-.chat-sys-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(29,155,240,0.08); }
+.chat-sys-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(55,180,255,0.08); }
 .chat-sys-panel {
   background: var(--bg-elevated); border-bottom: 1px solid var(--border);
   padding: 14px 20px; animation: menuIn 0.15s ease;
@@ -1663,7 +2120,7 @@ kbd {
 .chat-sys-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-secondary); margin-bottom: 8px; }
 .chat-sys-textarea {
   width: 100%; padding: 9px 12px;
-  background: var(--bg); border: 1px solid var(--border);
+  background: var(--glass-raised); border: 1px solid var(--glass-border);
   border-radius: 10px; color: var(--text-primary); font-size: 13px;
   outline: none; resize: vertical; font-family: inherit; line-height: 1.5;
   transition: border-color 0.15s;
@@ -1692,7 +2149,9 @@ kbd {
 .podcast-count-input:focus { border-color: var(--accent); }
 
 /* ── Topic multi-select picker ── */
-.topic-picker { position: relative; width: 100%; }
+/* z-index for the same reason as .profile-card: glass siblings would otherwise
+   paint over the dropdown. */
+.topic-picker { position: relative; width: 100%; z-index: 30; }
 .topic-picker-trigger {
   width: 100%; display: flex; align-items: center; gap: 8px;
   padding: 9px 12px; border-radius: 10px;
@@ -1711,7 +2170,8 @@ kbd {
 }
 .topic-picker-dropdown {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 9999;
-  background: #141414; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--glass-overlay); border: 1px solid var(--glass-border); border-radius: 14px;
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
   padding: 6px; max-height: 260px; overflow-y: auto;
   box-shadow: 0 12px 40px rgba(0,0,0,0.7);
   scrollbar-width: thin; scrollbar-color: var(--border) transparent;
@@ -1731,7 +2191,7 @@ kbd {
   font-size: 13px; color: var(--text-primary); transition: background 0.1s;
 }
 .topic-picker-option:hover { background: rgba(255,255,255,0.05); }
-.topic-picker-option.selected { background: rgba(29,155,240,0.08); color: var(--accent); }
+.topic-picker-option.selected { background: rgba(55,180,255,0.08); color: var(--accent); }
 .topic-picker-check { width: 14px; font-size: 12px; color: var(--accent); flex-shrink: 0; }
 .topic-picker-opt-label { flex: 1; }
 .topic-picker-opt-badge { font-size: 11px; color: var(--text-tertiary); }
@@ -1769,8 +2229,8 @@ kbd {
 /* ── Podcast v2 player ── */
 .podcast-player-v2 {
   display: flex; flex-direction: column;
-  height: 100vh; overflow: hidden;
-  background: var(--bg);
+  height: 100%; overflow: hidden;
+  background: transparent;
 }
 
 .podcast-v2-topbar {
@@ -1807,8 +2267,8 @@ kbd {
 .podcast-v2-seg.upcoming { opacity: 0.45; }
 .podcast-v2-seg.current {
   opacity: 1;
-  background: rgba(29,155,240,0.04);
-  border-color: rgba(29,155,240,0.12);
+  background: rgba(55,180,255,0.04);
+  border-color: rgba(55,180,255,0.12);
 }
 
 .podcast-v2-text {
@@ -1846,8 +2306,9 @@ kbd {
 /* Waveform */
 .podcast-v2-wave-wrap {
   flex-shrink: 0; padding: 12px 24px 8px;
-  background: var(--bg);
-  border-top: 1px solid var(--border);
+  background: var(--glass-panel);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--glass-border);
 }
 .podcast-v2-waveform {
   display: flex; align-items: flex-end; gap: 2px;
@@ -1863,7 +2324,8 @@ kbd {
 .podcast-v2-controls {
   flex-shrink: 0; display: flex; align-items: center;
   gap: 12px; padding: 14px 24px 20px;
-  background: var(--bg); border-top: 1px solid var(--border);
+  background: var(--glass-panel); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border-top: 1px solid var(--glass-border);
   justify-content: center;
 }
 .podcast-ctrl-btn {
@@ -1905,4 +2367,920 @@ kbd {
   cursor: pointer; transition: all 0.12s;
 }
 .podcast-speed-btn:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
-.podcast-speed-btn.active { border-color: var(--accent); background: rgba(29,155,240,0.12); color: var(--accent); }
+.podcast-speed-btn.active { border-color: var(--accent); background: rgba(55,180,255,0.12); color: var(--accent); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Multi-source: badges, media cards, the Hacker News pane, the add/import pane
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Card: source badge, title, thumbnail ─────────────────────────────────── */
+
+.src-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px 1px 5px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+.src-badge svg { flex-shrink: 0; }
+
+.tweet-avatar-placeholder.src {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.tweet-title {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: 15.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.tweet-title:hover { color: var(--accent); }
+
+.tweet-thumb {
+  display: block;
+  position: relative;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  line-height: 0;
+  background: var(--bg-elevated);
+  max-width: 420px;
+}
+.tweet-thumb img {
+  width: 100%;
+  height: auto;
+  display: block;
+  /* YouTube's hqdefault is 4:3 with black bars baked in; cropping to 16:9
+     removes them without needing a second request for a maxres thumbnail. */
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+.tweet-thumb-duration {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.tweet-thumb.is-video::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 48px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(255, 0, 51, 0.92) url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M8 5v14l11-7z'/%3E%3C/svg%3E") no-repeat center / 18px;
+  opacity: 0.92;
+  transition: transform 0.15s ease;
+}
+.tweet-thumb.is-video:hover::after { transform: scale(1.08); }
+
+/* ── Shared pane chrome ───────────────────────────────────────────────────── */
+
+/* 16px matches the feed's gutter exactly, so the close button lands on the
+   same right edge as "Mark all read" and the card actions rather than 10px
+   inside them. */
+.hn-pane, .add-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 16px 60px;
+}
+
+.hn-header, .add-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.hn-title { display: flex; align-items: flex-start; gap: 11px; }
+.hn-title h2, .add-header h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.hn-sub { display: block; margin-top: 2px; font-size: 13px; color: var(--text-secondary); }
+
+.hn-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+}
+.hn-close:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+/* ── Hacker News ──────────────────────────────────────────────────────────── */
+
+.hn-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.hn-tabs { display: flex; gap: 4px; background: var(--bg-elevated); border-radius: 9px; padding: 3px; }
+.hn-tab {
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 13px;
+}
+.hn-tab:hover { color: var(--text-primary); }
+.hn-tab.active { background: var(--bg-solid); color: #ff6600; }
+
+.hn-search {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 8px 12px;
+  outline: none;
+}
+.hn-search:focus { border-color: var(--border-strong); }
+
+.hn-refresh {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 14px;
+}
+.hn-refresh:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-strong); }
+.hn-refresh:disabled { opacity: 0.5; cursor: default; }
+
+.hn-list { display: flex; flex-direction: column; }
+
+.hn-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.hn-row:hover { background: var(--bg-hover); }
+.hn-row.is-saved { opacity: 0.55; }
+
+.hn-rank {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  min-width: 22px;
+  text-align: right;
+  padding-top: 1px;
+}
+.hn-body { flex: 1; min-width: 0; }
+
+.hn-story-title {
+  color: var(--text-primary);
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+}
+.hn-story-title:hover { color: #ff6600; }
+
+.hn-domain { color: var(--text-tertiary); font-size: 12px; margin-left: 7px; }
+
+.hn-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+.hn-meta a { color: var(--text-secondary); text-decoration: none; }
+.hn-meta a:hover { color: var(--accent); text-decoration: underline; }
+.hn-points { color: #ff6600; font-weight: 600; }
+
+.hn-save {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 14px;
+}
+.hn-save:hover:not(:disabled) { border-color: #ff6600; color: #ff6600; }
+.hn-save.saved, .hn-save:disabled { color: var(--text-tertiary); cursor: default; border-color: var(--border); }
+
+.hn-empty, .hn-error {
+  padding: 34px 4px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+}
+.hn-error { color: #ff7b7b; }
+.hn-error button {
+  display: block;
+  margin: 12px auto 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 14px;
+}
+
+/* ── Add / import ─────────────────────────────────────────────────────────── */
+
+/* No width cap. The pane sits in the same column as the feed and the chat and
+   stats modes, and capping it at 720 left the close button and every block
+   stopping ~200px short of the column's right edge — a gutter wide enough to
+   read as a rendering fault rather than a margin. */
+
+.add-tabs { display: flex; gap: 4px; background: var(--bg-elevated); border-radius: 9px; padding: 3px; margin-bottom: 20px; }
+.add-tab {
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+.add-tab:hover { color: var(--text-primary); }
+.add-tab.active { background: var(--bg-solid); color: var(--text-primary); }
+
+.add-block {
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  padding: 18px;
+  margin-bottom: 16px;
+  background: var(--bg-elevated);
+}
+.add-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+.add-row { display: flex; gap: 8px; }
+
+.add-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-solid);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  padding: 10px 13px;
+  outline: none;
+}
+.add-input:focus { border-color: var(--accent); }
+.add-input::placeholder { color: var(--text-tertiary); }
+
+.add-btn {
+  background: var(--bg-solid);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 18px;
+}
+.add-btn:hover:not(:disabled) { border-color: var(--border-strong); }
+.add-btn:disabled { opacity: 0.45; cursor: default; }
+.add-btn.primary { background: var(--accent); border-color: var(--accent); color: #05121c; }
+.add-btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.add-btn.wide { display: block; width: 100%; margin-top: 12px; }
+
+.add-hint {
+  margin-top: 10px;
+  /* The blocks fill the column; the prose inside them does not. A 60-em line is
+     past the point where the eye loses its place returning to the next one. */
+  max-width: 62em;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.add-hint strong { color: var(--text-primary); font-weight: 600; }
+
+.add-link {
+  display: inline-block;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 0;
+  margin-left: 6px;
+}
+.add-link:hover { text-decoration: underline; }
+
+.add-colls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 14px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.add-coll {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.add-coll:hover { background: var(--bg-hover); }
+.add-coll.on { border-color: var(--border); background: var(--bg-solid); }
+.add-coll input { accent-color: var(--accent); cursor: pointer; }
+.add-coll-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-coll-count { color: var(--text-tertiary); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.add-msg {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.add-msg.ok { background: rgba(0, 186, 124, 0.12); color: #4ade9f; }
+.add-msg.error { background: rgba(249, 24, 128, 0.11); color: #ff7b9c; }
+
+/* ── Sources: filled vs. empty ────────────────────────────────────────────────
+   Every source is listed from the first launch. Colour carries the whole
+   signal: a filled source wears its brand colour, an empty one inherits the
+   row's grey and only wakes up on hover. */
+
+.sidebar-item.source-item.is-empty {
+  color: var(--text-tertiary);
+}
+.sidebar-item.source-item.is-empty .sidebar-badge {
+  color: var(--text-tertiary);
+  opacity: 0.6;
+}
+/* The icon is given no inline colour when empty, so it inherits this. */
+.sidebar-item.source-item.is-empty svg {
+  opacity: 0.5;
+}
+
+/* An empty source with nowhere to send you — X, whose only way in is a sync —
+   stays inert rather than pretending to be a button. */
+.sidebar-item.source-item.is-empty:not(.is-actionable) {
+  cursor: default;
+}
+.sidebar-item.source-item.is-empty:not(.is-actionable):hover {
+  background: none;
+}
+
+.sidebar-item.source-item.is-actionable:hover {
+  color: var(--text-secondary);
+}
+.sidebar-item.source-item.is-actionable:hover svg {
+  opacity: 0.85;
+}
+
+/* The count swaps to a verb: "Add" when the source is empty, "Open" when it
+   has something and you want the browse or import surface again. An empty row
+   reveals it on row hover, because the whole row is the doorway; a filled row
+   only on badge hover, because the row itself is a filter. */
+.sidebar-item.source-item { padding: 0; }
+.source-item .source-main {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center;
+  padding: 9px 0 9px 20px;
+}
+.source-item > .sidebar-badge,
+.source-item > .src-action { margin-right: 20px; }
+/* A folder being renamed is a text field, not a control: no button wrapper. */
+.sidebar-fav-item.is-renaming { cursor: default; }
+
+.sidebar-badge.src-action {
+  font: inherit;
+  cursor: pointer;
+  min-width: 34px;
+  text-align: center;
+}
+.source-item .src-add { display: none; }
+
+.source-item.is-empty:hover .src-count,
+.source-item .src-action:hover .src-count { display: none; }
+.source-item.is-empty:hover .src-add,
+.source-item .src-action:hover .src-add {
+  display: inline;
+  color: var(--accent);
+  font-weight: 600;
+}
+.source-item.is-empty:hover .sidebar-badge,
+.source-item .src-action:hover {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.hn-saved-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 14px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+}
+.hn-saved-note button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 0;
+}
+.hn-saved-note button:hover { text-decoration: underline; }
+
+/* ── A source as a destination: header, two tabs, its own containers ────────── */
+
+.source-view { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+
+.source-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 16px 0;
+}
+.source-view-title { display: flex; align-items: center; gap: 10px; }
+.source-view-title h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+
+.source-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 16px 0;
+  padding: 3px;
+  background: var(--bg-elevated);
+  border-radius: 9px;
+}
+.source-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+.source-tab:hover { color: var(--text-primary); }
+.source-tab.active { background: var(--bg-solid); color: var(--text-primary); }
+.source-tab-count {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  background: var(--bg-solid);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+.source-tab.active .source-tab-count { background: var(--bg-elevated); }
+
+/* The browse tab reuses the add pane's blocks, so it only needs the gutter. */
+.source-browse { padding: 16px 16px 60px; }
+/* Embedded in a source view, the Hacker News list keeps its own toolbar but
+   drops the header the view already provides. */
+.hn-pane.is-embedded { padding-top: 14px; overflow: visible; }
+.embedded-sub { display: block; margin-bottom: 12px; color: var(--text-secondary); font-size: 13px; }
+
+.src-folders { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.src-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-solid);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12.5px;
+  padding: 6px 12px;
+}
+.src-folder:hover { border-color: var(--border-strong); }
+.src-folder.on { border-color: var(--accent); color: var(--accent); }
+.src-folder-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.src-folder.on .src-folder-count { color: var(--accent); }
+
+.src-folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 16px 0;
+  padding: 5px 8px 5px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  align-self: flex-start;
+}
+.src-folder-chip button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+/* Selected wins over empty. Without this an empty source you are *in* renders
+   greyer than a filled source you are not in — the selection reading as less
+   prominent than the thing beside it, which is backwards. */
+.sidebar-item.source-item.is-empty.active { color: var(--accent); }
+.sidebar-item.source-item.is-empty.active svg { opacity: 1; }
+
+/* An active badge is already filled with the accent by the base rule above, so
+   its contents have to be the contrast colour. Painting them accent-on-accent
+   is what made a selected source's count vanish — a blue circle with an
+   invisible number in it. Applies to the count and the ✕ alike. */
+.sidebar-item.source-item.active .sidebar-badge,
+.sidebar-item.source-item.active .sidebar-badge .src-count,
+.sidebar-item.source-item.active .sidebar-badge .src-add {
+  opacity: 1;
+  color: #fff;
+}
+
+/* Clearing a source reads as a dismissal, not a destination. */
+.sidebar-badge.src-action.is-clear { border-color: var(--accent); }
+.source-item.active .src-action.is-clear .src-count { display: inline; }
+.source-item.active .src-action.is-clear:hover .src-count { display: none; }
+.source-item.active .src-action.is-clear:hover .src-add { display: inline; }
+
+/* A source with no second tab still wants its count somewhere. */
+.source-view-count {
+  margin-left: 2px;
+  padding: 1px 9px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+/* Without tabs the feed sits straight under the header, so it needs the gap
+   the tab strip used to provide. */
+.source-view:not(:has(.source-tabs)) .source-view-head { padding-bottom: 12px; }
+
+/* ── Long text: clamp, then let the reader ask for the rest ────────────────── */
+/*
+   An imported YouTube description runs to several hundred words of links and
+   chapter markers, and a Hacker News post can be an essay. Rendered in full
+   they push every other card off the screen, so one long item costs you the
+   scan the feed exists to provide.
+*/
+.tweet-text.is-clamped {
+  max-height: 15.5em;
+  overflow: hidden;
+  /* Fade rather than a hard cut, so it reads as "continues" and not as text
+     that happens to end mid-sentence. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 74%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 74%, transparent 100%);
+}
+
+.tweet-more {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.tweet-more:hover { text-decoration: underline; }
+
+/* The AI button reads as its own kind of action, not another toggle. */
+.tw-btn.ai-btn { color: var(--accent); }
+.tw-btn.ai-btn:hover { color: var(--accent-hover); background: rgba(55, 180, 255, 0.12); }
+
+/* ── Rendered Markdown in chat answers ─────────────────────────────────────── */
+/*
+   The models answer in Markdown whether asked to or not, so this is the
+   difference between a wall of asterisks and something you can read. Sizes are
+   set against the body text rather than in px, so the whole block scales as one
+   thing.
+*/
+.chat-assistant-text.md {
+  font-size: 14.5px;
+  line-height: 1.68;
+  color: var(--text-primary);
+}
+
+.chat-assistant-text.md > *:first-child { margin-top: 0; }
+.chat-assistant-text.md > *:last-child  { margin-bottom: 0; }
+
+.chat-assistant-text.md p { margin: 0 0 0.95em; }
+
+.chat-assistant-text.md h3,
+.chat-assistant-text.md h4,
+.chat-assistant-text.md h5,
+.chat-assistant-text.md h6 {
+  margin: 1.3em 0 0.5em;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  color: var(--text-primary);
+}
+
+.chat-assistant-text.md strong { font-weight: 680; color: var(--text-primary); }
+.chat-assistant-text.md em { font-style: italic; }
+
+.chat-assistant-text.md a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(55, 180, 255, 0.32);
+}
+.chat-assistant-text.md a:hover {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent-hover);
+}
+
+.chat-assistant-text.md ul,
+.chat-assistant-text.md ol { margin: 0 0 0.95em; padding-left: 1.35em; }
+.chat-assistant-text.md li { margin-bottom: 0.32em; }
+.chat-assistant-text.md li::marker { color: var(--text-tertiary); }
+
+.chat-assistant-text.md code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+}
+
+.chat-assistant-text.md blockquote {
+  margin: 0 0 0.95em;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+
+/* ── Choosing an export instead of typing where it lives ───────────────────── */
+
+.add-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 22px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 11px;
+  background: var(--bg-solid);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.add-drop:hover, .add-drop.over { border-color: var(--accent); background: rgba(55, 180, 255, 0.06); }
+.add-drop strong { color: var(--accent); font-weight: 650; }
+.add-drop span { color: var(--text-tertiary); font-size: 12px; }
+.add-drop.is-busy { opacity: 0.6; cursor: default; }
+
+/* The path field is the fallback, so it starts folded rather than competing
+   with the picker for the same job. */
+.add-path { margin-top: 12px; }
+.add-path summary {
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 12.5px;
+  list-style: none;
+}
+.add-path summary::-webkit-details-marker { display: none; }
+.add-path summary::before { content: '▸ '; }
+.add-path[open] summary::before { content: '▾ '; }
+.add-path summary:hover { color: var(--text-secondary); }
+
+/* ── Folder rows carry their source's mark ─────────────────────────────────── */
+.folder-marks { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.folder-marks svg { flex-shrink: 0; }
+.folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-item.folder-item .sidebar-item-left { min-width: 0; }
+
+/* Hacker News points read as a vote, not a like. */
+.tweet-action.points { color: #ff9d5c; }
+.tweet-action.duration { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* Only the folders whose name exists in two services carry the service name. */
+.folder-qualifier {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* ── Reading typeface ──────────────────────────────────────────────────────────
+   Bundled as latin woff2 subsets so the app renders the face you picked with no
+   network. `font-display: block` rather than `swap`: this is a preference you
+   set deliberately, and a flash of the system font on every launch would make
+   the setting look like it had not taken. */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Literata';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('/fonts/literata-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Architects Daughter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/architects-daughter-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+
+:root {
+  --app-font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --app-font-scale: 1;
+}
+
+/* The content, not the chrome. A hand-drawn sidebar is a novelty; a hand-drawn
+   page of saved writing is a reading choice. */
+.tweet-text,
+.tweet-title,
+.quoted-tweet-text,
+.chat-assistant-text,
+.chat-bubble,
+.hn-story-title,
+.stats-observation p {
+  font-family: var(--app-font);
+  font-size: calc(1em * var(--app-font-scale));
+}
+
+/* The picker previews each face in itself — a name alone tells you nothing. */
+.font-choice-sample {
+  display: block;
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* "Sync & Classify" drives one source; the label should say so. */
+.panel-card-qualifier {
+  margin-left: 7px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* ── Note popup, restyled ──────────────────────────────────────────────────────
+   The wrapper exists so the popup can be positioned against the pencil while
+   being a *sibling* of it rather than a child — a textarea inside a <button> is
+   invalid HTML, and the browser's reading of it is that Space activates the
+   button, which closed the note on every space you typed. */
+
+.note-wrap { position: relative; display: inline-flex; }
+
+.note-popup {
+  width: 300px;
+  padding: 14px;
+  border-radius: 14px;
+  /* Right-anchored, but never off the left edge of a narrow card. */
+  right: 0;
+  animation: note-pop 0.13s ease-out;
+  transform-origin: top right;
+}
+@keyframes note-pop {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.note-popup-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.note-popup-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+/* Whose bookmark this is attached to — three popups open in a long feed look
+   identical otherwise. */
+.note-popup-for {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.note-popup-textarea {
+  min-height: 84px;
+  padding: 10px 11px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  resize: none;
+}
+.note-popup-textarea::placeholder { color: var(--text-tertiary); }
+.note-popup-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(55, 180, 255, 0.14);
+}
+
+.note-popup-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.note-popup-hint {
+  flex: 1;
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.note-popup-hint kbd {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  font-family: inherit;
+  font-size: 10px;
+}
+.note-popup-save { padding: 6px 15px; transition: background 0.15s, opacity 0.15s; }
+/* Nothing changed, nothing to save — the button says so rather than pretending. */
+.note-popup-save:disabled { opacity: 0.4; cursor: default; background: var(--accent); }
+.note-popup-delete { transition: border-color 0.15s, color 0.15s; }
+.note-popup-delete:hover { border-color: var(--like); }
+
+/* The pencil stays lit while its note is open. */
+.tw-btn.note-btn.open { color: var(--accent); background: rgba(55, 180, 255, 0.12); }

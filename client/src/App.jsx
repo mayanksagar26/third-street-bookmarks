@@ -9,11 +9,15 @@ import ChatWithBookmarks from './components/ChatWithBookmarks';
 import StatsObservations from './components/StatsObservations';
 import BookmarkPodcast from './components/BookmarkPodcast';
 import VoiceBubble from './components/VoiceBubble';
-import BirdclawPanel from './components/BirdclawPanel';
-import { DEFAULT_SOURCE, CAPABILITY_TOOLS } from './sources';
+import Settings from './components/Settings';
+import HackerNews from './components/HackerNews';
+import AddBookmark from './components/AddBookmark';
+import SourceView from './components/SourceView';
+import { DEFAULT_SOURCE } from './sources';
+import { getBookmarkSource, sortsForSources } from './bookmark-sources';
+import { applyFont, DEFAULT_FONT } from './fonts';
 
 const PAGE_SIZE = 30;
-const CAP_MODES = CAPABILITY_TOOLS.map(t => t.id); // ['likes','inbox','digests']
 
 function parseDate(s) {
   try { return new Date(s).getTime() || 0; } catch { return 0; }
@@ -26,6 +30,7 @@ function sortBookmarks(list, sort) {
   if (sort === 'likes')     return copy.sort((a, b) => (b.likeCount || 0) - (a.likeCount || 0));
   if (sort === 'bookmarks') return copy.sort((a, b) => (b.bookmarkCount || 0) - (a.bookmarkCount || 0));
   if (sort === 'reposts')   return copy.sort((a, b) => (b.repostCount || 0) - (a.repostCount || 0));
+  if (sort === 'replies')   return copy.sort((a, b) => (b.replyCount || 0) - (a.replyCount || 0));
   if (sort === 'author')    return copy.sort((a, b) => (a.authorHandle || '').localeCompare(b.authorHandle || ''));
   return copy;
 }
@@ -56,15 +61,46 @@ export default function App() {
   const [searchQuery, setSearchQuery]           = useState('');
   const [readIds, setReadIds]                   = useState(new Set());
   const [favMap, setFavMap]                     = useState({});
+  // [{ folder, count, lastUsed }] from state.db, most recently used first.
+  const [knownFolders, setKnownFolders]         = useState([]);
   const [notesMap, setNotesMap]                 = useState({});
   const [currentVoice, setCurrentVoice]         = useState(null);
   const [showUnreadOnly, setShowUnreadOnly]     = useState(true);
   const [selectedCategories, setSelectedCats]   = useState(new Set());
   const [syncState, setSyncState]               = useState({ status: 'idle', msg: '' });
   const [activeMode, setActiveMode]             = useState(null);
+  const [settingsOpen, setSettingsOpen]         = useState(false);
+  // Which tab the add pane opens on when a source row sends you there.
+  const [addTab, setAddTab]                     = useState('paste');
+  // The bookmark the AI button was pressed on, handed to the chat pane so it
+  // can open already asking about it.
+  const [explainTarget, setExplainTarget]       = useState(null);
+  // Source is its own axis, not another value of `currentFilter`.
+  //
+  // While they shared one variable, picking a source *replaced* "All Bookmarks"
+  // rather than narrowing it, so the two could never both be lit and clicking
+  // All Bookmarks silently dropped the source you were looking at. They are
+  // different questions — which source, and read or unread — and they compose.
+  const [sourceFilter, setSourceFilter]         = useState(null);
+  const [sourceTab, setSourceTab]               = useState('saved');
+  // A container the source owns (a YouTube playlist, an Instagram collection),
+  // scoped to the source view rather than the sidebar's global folder list.
+  const [sourceFolder, setSourceFolder]         = useState(null);
+  // { key, name, source } — a folder is identified by both halves, never a name.
+  const [folderPick, setFolderPick]             = useState(null);
+
+  // The native menu's Settings item (Cmd+,) reaches React through an event,
+  // since the menu lives in Rust and has no other handle on this tree.
+  useEffect(() => {
+    const open = () => setSettingsOpen(true);
+    window.addEventListener('tsb:open-settings', open);
+    return () => window.removeEventListener('tsb:open-settings', open);
+  }, []);
   const [aiBackend, setAiBackend]               = useState('claude');
   const [classifyBackend, setClassifyBackend]   = useState('python');
   const [syncSource, setSyncSource]             = useState(DEFAULT_SOURCE);
+  const [syncBrowser, setSyncBrowser]           = useState('chrome');
+  const [browserInfo, setBrowserInfo]           = useState([]);
   const [sourceInfo, setSourceInfo]             = useState([]); // [{id,label,provides,installed}]
   const [ttsConfig, setTtsConfigState]          = useState(loadTtsConfig);
   const [showVoiceSetup, setShowVoiceSetup]     = useState(false);
@@ -74,9 +110,11 @@ export default function App() {
   const voiceScriptRef                          = useRef([]);
   const audioRef                                = useRef(null);
 
-  // Load bookmarks
-  useEffect(() => {
-    fetch('/api/bookmarks')
+  // Load bookmarks. Extracted so anything that adds to the collection — a
+  // Hacker News save, a pasted link, an export import — can pull the merged
+  // list again rather than trying to splice a record in by hand.
+  const loadBookmarks = useCallback(() => {
+    return fetch('/api/bookmarks')
       .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(d.error || 'Failed to load')))
       .then(data => {
         setAllBookmarks(data);
@@ -94,12 +132,27 @@ export default function App() {
       .catch(e => { setError(String(e)); setLoading(false); });
   }, []);
 
+  useEffect(() => { loadBookmarks(); }, [loadBookmarks]);
+
+  // The full folder list, including folders with no member in this collection.
+  useEffect(() => {
+    fetch('/api/fav-folders')
+      .then(r => r.json())
+      .then(d => { if (Array.isArray(d)) setKnownFolders(d); })
+      .catch(() => {});
+  }, []);
+
   // Load settings
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
       if (d.aiBackend) setAiBackend(d.aiBackend);
       if (d.classifyBackend) setClassifyBackend(d.classifyBackend);
       if (d.syncSource) setSyncSource(d.syncSource);
+      if (d.syncBrowser) setSyncBrowser(d.syncBrowser);
+      // The reading face is a setting, so it has to be on the document before
+      // the feed paints rather than after — otherwise every launch flashes the
+      // system font and looks like the choice didn't stick.
+      applyFont(d.readingFont || DEFAULT_FONT);
     }).catch(() => {});
   }, []);
 
@@ -107,6 +160,9 @@ export default function App() {
   useEffect(() => {
     fetch('/api/sources').then(r => r.json()).then(d => {
       if (d.sources) setSourceInfo(d.sources);
+    }).catch(() => {});
+    fetch('/api/browsers').then(r => r.json()).then(d => {
+      if (d.browsers) setBrowserInfo(d.browsers);
     }).catch(() => {});
   }, []);
 
@@ -130,7 +186,11 @@ export default function App() {
         } else if (d.classify.status === 'running') {
           setSyncState({ status: 'running', msg: d.classify.progress || 'Classifying…' });
         } else if (d.sync.status === 'error' || d.classify.status === 'error') {
-          setSyncState({ status: 'error', msg: 'Something went wrong' });
+          // ft names the cause and the remedy; both beat "Something went wrong",
+          // which sent you looking at this app for a problem that is usually an
+          // expired X session in whichever browser the sync reads.
+          const detail = [d.sync.error, d.sync.fix].filter(Boolean).join(' ');
+          setSyncState({ status: 'error', msg: detail || 'Something went wrong' });
           clearInterval(timer);
         } else {
           setSyncState({ status: 'done', msg: 'Done ✓ — reloading…' });
@@ -147,9 +207,43 @@ export default function App() {
     return () => clearInterval(timer);
   }, [syncState.status]);
 
+  // Latest feed state for the key handler below, which attaches once and so
+  // must not close over any of it. Pinned to the first render, `filtered` was
+  // still empty, `pageItems.length - 1` was -1, and focus could never leave
+  // -1: j/k/r/f did nothing until some unrelated change forced a re-subscribe.
+  const keyStateRef = useRef({ pageItems: [], favMap: {}, activeMode: null, focusedIdx: -1 });
+  useEffect(() => {
+    keyStateRef.current = {
+      pageItems: filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+      favMap,
+      activeMode,
+      focusedIdx,
+    };
+  });
+
   // Keyboard shortcuts
   useEffect(() => {
     function onKey(e) {
+      const { pageItems, favMap: favs, activeMode: mode, focusedIdx: focused } = keyStateRef.current;
+      // Ahead of the typing guard below: ⌘K reaches the chat from anywhere,
+      // including with the cursor still in the search box. Checked before the
+      // bare-k feed navigation so the two don't collide.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setActiveMode(m => (m === 'chat' ? null : 'chat'));
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (mode) {
+          e.preventDefault();
+          setActiveMode(null);
+        } else {
+          document.activeElement?.blur();
+        }
+        return;
+      }
+
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
@@ -159,21 +253,19 @@ export default function App() {
         return;
       }
 
-      const pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-
       if (e.key === 'j' || e.key === 'ArrowDown') {
         e.preventDefault();
         setFocusedIdx(i => Math.min(i + 1, pageItems.length - 1));
       } else if (e.key === 'k' || e.key === 'ArrowUp') {
         e.preventDefault();
         setFocusedIdx(i => Math.max(i - 1, 0));
-      } else if (e.key === 'r' && focusedIdx >= 0) {
-        const bm = pageItems[focusedIdx];
+      } else if (e.key === 'r' && focused >= 0) {
+        const bm = pageItems[focused];
         if (bm) handleToggleRead(bm.id);
-      } else if (e.key === 'f' && focusedIdx >= 0) {
-        const bm = pageItems[focusedIdx];
+      } else if (e.key === 'f' && focused >= 0) {
+        const bm = pageItems[focused];
         if (bm) {
-          const cur = favMap[bm.id] || [];
+          const cur = favs[bm.id] || [];
           const next = cur.includes('Favourites') ? cur.filter(f => f !== 'Favourites') : [...cur, 'Favourites'];
           handleSetFavFolders(bm.id, next);
         }
@@ -181,7 +273,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [focusedIdx, currentPage]); // eslint-disable-line
+  }, []); // eslint-disable-line -- live state comes from keyStateRef, not the closure
 
   // Computed: filtered + sorted
   const filtered = useMemo(() => {
@@ -195,15 +287,12 @@ export default function App() {
     }
 
     if (currentFilter !== 'all') {
-      if (currentFilter === 'gems') {
-        const cutoff = Date.now() - 30 * 86400000;
-        result = result.filter(b => {
-          const date = parseDate(b.bookmarkedAt || b.syncedAt);
-          return date > 0 && date < cutoff && !readIds.has(b.id);
-        });
-      } else if (currentFilter.startsWith('folder:')) {
-        const folder = currentFilter.slice(7);
-        result = result.filter(b => (b.folderNames || []).includes(folder));
+      if (currentFilter === 'folder' && folderPick) {
+        // Matched on source as well as name: two services can both have a
+        // folder called "Informative", and they are not the same folder.
+        result = result.filter(b =>
+          (b.source || 'x') === folderPick.source &&
+          (b.folderNames || []).includes(folderPick.name));
       } else if (currentFilter === 'fav:all') {
         result = result.filter(b => favMap[b.id]?.length);
       } else if (currentFilter.startsWith('fav:')) {
@@ -212,8 +301,13 @@ export default function App() {
       }
     }
 
+    if (sourceFilter) {
+      result = result.filter(b => (b.source || 'x') === sourceFilter);
+      if (sourceFolder) result = result.filter(b => (b.folderNames || []).includes(sourceFolder));
+    }
+
     if (currentVoice) result = result.filter(b => b.authorHandle === currentVoice);
-    if (showUnreadOnly && currentFilter !== 'gems') result = result.filter(b => !readIds.has(b.id));
+    if (showUnreadOnly) result = result.filter(b => !readIds.has(b.id));
 
     if (searchQuery) {
       const q = searchQuery;
@@ -222,16 +316,52 @@ export default function App() {
         (b.authorHandle || '').toLowerCase().includes(q.replace('@', '')) ||
         (b.authorName || '').toLowerCase().includes(q) ||
         (b.articleTitle || '').toLowerCase().includes(q) ||
+        (b.title || '').toLowerCase().includes(q) ||
+        (b.domain || '').toLowerCase().includes(q) ||
         (b.primaryCategory || '').toLowerCase().includes(q) ||
         (notesMap[b.id] || '').toLowerCase().includes(q)
       );
     }
 
     return sortBookmarks(result, currentSort);
-  }, [allBookmarks, currentFilter, currentSort, searchQuery, readIds, favMap, notesMap, currentVoice, showUnreadOnly, selectedCategories]);
+  }, [allBookmarks, currentFilter, currentSort, searchQuery, readIds, favMap, notesMap, currentVoice, showUnreadOnly, selectedCategories, sourceFilter, sourceFolder, folderPick]);
+
+  /**
+   * Identity of the current view, for the feed's leave animation.
+   *
+   * A card that drops out while this holds still left because of something you
+   * did to it, and is worth animating away. When this changes you asked for a
+   * different set of bookmarks, and the feed should just show them.
+   */
+  const viewKey = useMemo(
+    () => [
+      currentFilter, currentSort, searchQuery, showUnreadOnly ? 'unread' : 'all',
+      currentVoice || '', [...selectedCategories].sort().join('+'),
+      sourceFilter || '', sourceFolder || '', folderPick?.key || '',
+    ].join('|'),
+    [currentFilter, currentSort, searchQuery, showUnreadOnly, currentVoice, selectedCategories, sourceFilter, sourceFolder, folderPick],
+  );
 
   const unreadCount = useMemo(() => allBookmarks.filter(b => !readIds.has(b.id)).length, [allBookmarks, readIds]);
-  const favFolders  = useMemo(() => [...new Set(Object.values(favMap).flat())].sort(), [favMap]);
+  /**
+   * Every folder that exists, most recently used first.
+   *
+   * Deriving this from favMap alone hid folders whose members all sit outside
+   * the loaded collection: they dropped out of the picker entirely, so there
+   * was no way to file anything into them again. state.db is authoritative;
+   * favMap only tops it up with folders created since the last fetch.
+   */
+  const favFolders = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const { folder } of knownFolders) {
+      if (folder && !seen.has(folder)) { seen.add(folder); out.push(folder); }
+    }
+    for (const folder of Object.values(favMap).flat()) {
+      if (folder && !seen.has(folder)) { seen.add(folder); out.push(folder); }
+    }
+    return out;
+  }, [knownFolders, favMap]);
 
   const catCounts = useMemo(() => {
     const counts = {};
@@ -242,19 +372,95 @@ export default function App() {
     return counts;
   }, [allBookmarks]);
 
-  const folderCounts = useMemo(() => {
-    const counts = {};
-    allBookmarks.forEach(b => (b.folderNames || []).forEach(f => { counts[f] = (counts[f] || 0) + 1; }));
-    return counts;
+  /**
+   * Which sources the sort bar should describe.
+   *
+   * Inferring this from what is on screen breaks the moment the screen is
+   * empty. A Hacker News view with everything read, or an Instagram source with
+   * nothing imported yet, produced no rows to inspect — and an empty list was
+   * read as "no idea, offer everything", which put Most Bookmarked and Most
+   * Reposted back in front of exactly the sources that have neither.
+   *
+   * So an explicit choice wins over an inferred one: an Instagram view is an
+   * Instagram view whether or not it currently contains anything. Only when
+   * nothing is selected does this fall back to inspecting the rows, and then to
+   * the whole collection rather than to every source that could ever exist.
+   */
+  const visibleSources = useMemo(() => {
+    if (sourceFilter) return [sourceFilter];
+    if (folderPick) return [folderPick.source];
+    const from = (list) => [...new Set(list.map(b => b.source || 'x'))];
+    return filtered.length ? from(filtered) : from(allBookmarks);
+  }, [filtered, allBookmarks, sourceFilter, folderPick]);
+
+  // If the active sort stops being offered — you were on "Most Reposted" and
+  // then opened Hacker News — fall back rather than leaving the bar with
+  // nothing highlighted and the feed in an order nothing explains.
+  useEffect(() => {
+    const allowed = sortsForSources(visibleSources).map(s => s.key);
+    if (allowed.length && !allowed.includes(currentSort)) setCurrentSort('newest');
+  }, [visibleSources, currentSort]);
+
+  /**
+   * Folders, keyed by name *and* source.
+   *
+   * A YouTube playlist and an Instagram collection can both be called
+   * "Informative", and merging them under one row produced a folder belonging
+   * to neither: one count, one logo, and a click that showed both. They are two
+   * rows now. Only the ones whose name is ambiguous say which service they came
+   * from — labelling every folder would be noise on the ones that need no
+   * explanation.
+   */
+  const folderIndex = useMemo(() => {
+    const counts = new Map();
+    const bySource = new Map();
+    for (const b of allBookmarks) {
+      const src = b.source || 'x';
+      for (const f of (b.folderNames || [])) {
+        const key = `${src} ${f}`;
+        counts.set(key, (counts.get(key) || 0) + 1);
+        if (!bySource.has(f)) bySource.set(f, new Set());
+        bySource.get(f).add(src);
+      }
+    }
+    return [...counts.entries()]
+      .map(([key, count]) => {
+        const sep = key.indexOf(' ');
+        const source = key.slice(0, sep);
+        const name = key.slice(sep + 1);
+        return { key, name, source, count, ambiguous: bySource.get(name).size > 1 };
+      })
+      .sort((a, b) => b.count - a.count);
   }, [allBookmarks]);
 
-  const gemsCount = useMemo(() => {
-    const cutoff = Date.now() - 30 * 86400000;
-    return allBookmarks.filter(b => {
-      const date = parseDate(b.bookmarkedAt || b.syncedAt);
-      return date > 0 && date < cutoff && !readIds.has(b.id);
-    }).length;
-  }, [allBookmarks, readIds]);
+  /**
+   * Source counts follow the read scope.
+   *
+   * On Unread Only, "X 3,233" was answering a question nobody asked: you had
+   * already said you only wanted unread, so the number beside each source has
+   * to be the unread one or it doesn't describe what clicking it would show.
+   * On All Bookmarks it is the total again.
+   *
+   * Categories and favourite folders are left alone deliberately — those are
+   * ways of grouping the whole collection, and a folder that read "0" every
+   * time you switched to unread would look broken rather than filtered.
+   */
+  const sourceCounts = useMemo(() => {
+    const counts = {};
+    allBookmarks.forEach(b => {
+      if (showUnreadOnly && readIds.has(b.id)) return;
+      const s = b.source || 'x';
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  }, [allBookmarks, showUnreadOnly, readIds]);
+
+  /** Totals, regardless of scope — for deciding whether a source is empty. */
+  const sourceTotals = useMemo(() => {
+    const counts = {};
+    allBookmarks.forEach(b => { const s = b.source || 'x'; counts[s] = (counts[s] || 0) + 1; });
+    return counts;
+  }, [allBookmarks]);
 
   // Handlers
   const handleToggleRead = useCallback(async (id) => {
@@ -277,6 +483,15 @@ export default function App() {
       clean.length ? (next[id] = clean) : delete next[id];
       return next;
     });
+    // Move what was just used to the front, so the picker's "recent" list
+    // reflects this click rather than the last fetch.
+    if (clean.length) {
+      setKnownFolders(prev => {
+        const touched = new Set(clean);
+        const bumped = clean.map(f => prev.find(k => k.folder === f) || { folder: f, count: 0, lastUsed: null });
+        return [...bumped, ...prev.filter(k => !touched.has(k.folder))];
+      });
+    }
     try {
       await fetch(`/api/fav/${id}`, {
         method: 'POST',
@@ -296,6 +511,17 @@ export default function App() {
         next[id] = [...new Set(arr.map(x => x === f ? t : x))];
       }
       return next;
+    });
+    setKnownFolders(prev => {
+      const merged = [];
+      for (const k of prev) {
+        const folder = k.folder === f ? t : k.folder;
+        const hit = merged.find(m => m.folder === folder);
+        // Renaming onto an existing name merges the two, as the server does.
+        if (hit) hit.count += k.count || 0;
+        else merged.push({ ...k, folder });
+      }
+      return merged;
     });
     setCurrentFilter(prev => prev === `fav:${f}` ? `fav:${t}` : prev);
     try {
@@ -370,12 +596,19 @@ export default function App() {
 
   const handleSetSyncSource = useCallback(async (source) => {
     setSyncSource(source);
-    // Leaving a birdclaw-only mode if we switch back to a source that lacks it
-    setActiveMode(m => (CAP_MODES.includes(m) ? null : m));
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ syncSource: source }),
+    }).catch(() => {});
+  }, []);
+
+  const handleSetSyncBrowser = useCallback(async (browser) => {
+    setSyncBrowser(browser);
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ syncBrowser: browser }),
     }).catch(() => {});
   }, []);
 
@@ -460,20 +693,126 @@ export default function App() {
 
   const handleFilterChange = useCallback((filter) => {
     setCurrentFilter(prev => (prev === filter && filter !== 'all') ? 'all' : filter);
-    // 'all' and favourites views show everything (read + unread); favourites are
-    // never hidden by read state.
-    if (filter === 'all' || filter.startsWith('fav:')) setShowUnreadOnly(false);
+    // 'all', favourites and folders show everything in them. A folder is a
+    // whole thing — a playlist, a collection — so opening one and being shown
+    // the slice that survives whichever source and read state happened to be
+    // set is not what the click asked for.
+    if (filter === 'all' || filter.startsWith('fav:') || filter === 'folder') {
+      setShowUnreadOnly(false);
+    }
+    // Same reasoning for the source: a folder belongs to one already, and
+    // intersecting it with a different one shows an empty feed.
+    if (filter === 'folder') { setSourceFilter(null); setSourceFolder(null); }
+    else setFolderPick(null);
+    // Picking anything in the sidebar is a request to look at the feed. Leaving
+    // a tool pane covering it meant the click appeared to do nothing at all.
+    // The source filter deliberately survives: "All Bookmarks" answers read-or-
+    // unread, not which-source, and clearing one from the other loses your place.
+    setActiveMode(null);
     setCurrentPage(1);
     setFocusedIdx(-1);
   }, []);
 
   const handleToggleCategory = useCallback((cat) => {
+    setActiveMode(null);
     setSelectedCats(prev => {
       const next = new Set(prev);
       next.has(cat) ? next.delete(cat) : next.add(cat);
       return next;
     });
     setCurrentPage(1);
+  }, []);
+
+  /**
+   * Clicking a source that has nothing in it yet.
+   *
+   * Filtering to an empty feed would tell you nothing you didn't already know
+   * from the greyed-out row, so these go to the surface that fills the source
+   * instead. X is the exception: its only route in is a Field Theory sync,
+   * which lives in the right panel, so that row stays inert and says so in its
+   * tooltip.
+   */
+  /** Open a source, on the tab that answers what the click was asking for. */
+  const openSource = useCallback((id, tab = 'saved') => {
+    setSourceFilter(id);
+    setSourceTab(tab);
+    setSourceFolder(null);
+    setActiveMode(null);
+    setCurrentPage(1);
+    setFocusedIdx(-1);
+  }, []);
+
+  const handleSourceClick = useCallback((id) => {
+    // Clicking the source you are already in closes it, the way every other
+    // filter in this sidebar toggles.
+    setSourceFilter(prev => (prev === id ? null : id));
+    setSourceTab('saved');
+    setSourceFolder(null);
+    setActiveMode(null);
+    setCurrentPage(1);
+    setFocusedIdx(-1);
+  }, []);
+
+  /** The badge on a source row — "Add" when it is empty, "Open" when it isn't. */
+  const handleSourceAction = useCallback((id) => {
+    openSource(id, 'browse');
+  }, [openSource]);
+
+  /**
+   * The AI button on a card.
+   *
+   * Opens the chat pane already asking about that bookmark, rather than
+   * dropping you into an empty prompt you then have to describe the thing in.
+   * A fresh object each time so pressing it twice on the same card asks again.
+   */
+  const handleExplain = useCallback((bm) => {
+    setExplainTarget({ bookmark: bm, at: Date.now() });
+    setActiveMode('chat');
+  }, []);
+
+  // One definition, two mount points: the ordinary feed, and the Saved tab
+  // inside a source view. Duplicating twenty props across both is how one of
+  // them quietly loses a handler.
+  const feedProps = {
+    bookmarks: filtered,
+    page: currentPage,
+    pageSize: PAGE_SIZE,
+    loading, error, searchQuery, readIds, favMap, favFolders, notesMap,
+    focusedIdx, viewKey, ttsConfig,
+    onToggleRead: handleToggleRead,
+    onSetFavFolders: handleSetFavFolders,
+    onRenameFavFolder: handleRenameFavFolder,
+    onUpdateNote: handleUpdateNote,
+    onBulkRead: handleBulkRead,
+    onPageChange: (p) => { setCurrentPage(p); setFocusedIdx(-1); },
+    onSpeakBookmark: (bm) => handleTtsSpeak(`From ${bm.authorName || bm.authorHandle}: ${cleanForVoice(bm.text)}`),
+    onExplain: handleExplain,
+  };
+
+  /**
+   * Picking a folder row. Clicking the open one closes it, like every filter here.
+   *
+   * Deliberately not routed through `handleFilterChange`: its toggle treats
+   * "same filter clicked twice" as a deselect, and every folder shares the one
+   * filter value, so moving from one folder straight to another read as
+   * closing the first and dropped you back to everything.
+   */
+  const handleFolderClick = useCallback((entry) => {
+    setFolderPick(prev => {
+      const same = prev && prev.key === entry.key;
+      setCurrentFilter(same ? 'all' : 'folder');
+      if (!same) {
+        // A folder is a whole thing: show all of it, not the slice that
+        // survives whichever source and read state happened to be set.
+        setShowUnreadOnly(false);
+        setSourceFilter(null);
+        setSourceFolder(null);
+      }
+      setActiveMode(null);
+      setCurrentPage(1);
+      setFocusedIdx(-1);
+      return same ? null : entry;
+    });
   }, []);
 
   const handleVoiceClick = useCallback((handle) => {
@@ -486,30 +825,48 @@ export default function App() {
       <Sidebar
         total={allBookmarks.length}
         unreadCount={unreadCount}
-        gemsCount={gemsCount}
         currentFilter={currentFilter}
         onFilterChange={handleFilterChange}
         showUnreadOnly={showUnreadOnly}
-        onToggleUnread={() => { setCurrentFilter('all'); setShowUnreadOnly(p => !p); setCurrentPage(1); setFocusedIdx(-1); }}
+        onToggleUnread={() => { setCurrentFilter('all'); setShowUnreadOnly(p => !p); setActiveMode(null); setCurrentPage(1); setFocusedIdx(-1); }}
         catCounts={catCounts}
         selectedCategories={selectedCategories}
         onToggleCategory={handleToggleCategory}
         onClearCategories={() => { setSelectedCats(new Set()); setCurrentPage(1); }}
         favMap={favMap}
         favFolders={favFolders}
-        folderCounts={folderCounts}
+        folderIndex={folderIndex}
+        folderPick={folderPick}
+        onFolderClick={handleFolderClick}
+        sourceCounts={sourceCounts}
+        sourceTotals={sourceTotals}
+        sourceFilter={sourceFilter}
+        onSourceClick={handleSourceClick}
+        onSourceAction={handleSourceAction}
         onRenameFavFolder={handleRenameFavFolder}
         syncSource={syncSource}
       />
       <main className="main">
         {activeMode === 'chat' ? (
-          <ChatWithBookmarks bookmarks={allBookmarks} aiBackend={aiBackend} onClose={() => setActiveMode(null)} />
+          <ChatWithBookmarks
+            bookmarks={allBookmarks}
+            aiBackend={aiBackend}
+            explainTarget={explainTarget}
+            onExplainConsumed={() => setExplainTarget(null)}
+            favMap={favMap}
+            favFolders={favFolders}
+            onSetFavFolders={handleSetFavFolders}
+            onRenameFavFolder={handleRenameFavFolder}
+            onClose={() => setActiveMode(null)}
+          />
         ) : activeMode === 'stats' ? (
           <StatsObservations bookmarks={allBookmarks} onClose={() => setActiveMode(null)} />
+        ) : activeMode === 'hn' ? (
+          <HackerNews onSaved={loadBookmarks} onClose={() => setActiveMode(null)} />
+        ) : activeMode === 'add' ? (
+          <AddBookmark initialTab={addTab} onAdded={loadBookmarks} onClose={() => setActiveMode(null)} />
         ) : activeMode === 'podcast' ? (
           <BookmarkPodcast bookmarks={allBookmarks} ttsConfig={ttsConfig} onSetTtsConfig={handleSetTtsConfig} aiBackend={aiBackend} onClose={() => setActiveMode(null)} />
-        ) : CAP_MODES.includes(activeMode) ? (
-          <BirdclawPanel mode={activeMode} onClose={() => setActiveMode(null)} />
         ) : (
           <>
             <Header
@@ -524,33 +881,36 @@ export default function App() {
               onSetTtsConfig={handleSetTtsConfig}
               onCloseVoiceSetup={() => setShowVoiceSetup(false)}
             />
-            <SortBar currentSort={currentSort} onSort={(s) => { setCurrentSort(s); setCurrentPage(1); }} />
+            {/* A source turns the column into that source's own place: its saved
+                list, and the surface that adds to it. Without a source selected
+                this is the ordinary feed and nothing changes. */}
+            {sourceFilter ? (
+              <SourceView
+                sourceId={sourceFilter}
+                tab={sourceTab}
+                onTabChange={setSourceTab}
+                onClose={() => { setSourceFilter(null); setSourceFolder(null); setCurrentPage(1); }}
+                bookmarks={allBookmarks}
+                savedCount={sourceCounts[sourceFilter] || 0}
+                onAdded={loadBookmarks}
+                activeFolder={sourceFolder}
+                onPickFolder={(f) => { setSourceFolder(f); setSourceTab('saved'); setCurrentPage(1); }}
+              >
+                <SortBar currentSort={currentSort} sourceIds={visibleSources} onSort={(s) => { setCurrentSort(s); setCurrentPage(1); }} />
+                <Feed {...feedProps} />
+              </SourceView>
+            ) : (
+            <>
+            <SortBar currentSort={currentSort} sourceIds={visibleSources} onSort={(s) => { setCurrentSort(s); setCurrentPage(1); }} />
             {!loading && !error && <StatsBar bookmarks={allBookmarks} />}
-            <Feed
-              bookmarks={filtered}
-              page={currentPage}
-              pageSize={PAGE_SIZE}
-              loading={loading}
-              error={error}
-              searchQuery={searchQuery}
-              readIds={readIds}
-              favMap={favMap}
-              favFolders={favFolders}
-              notesMap={notesMap}
-              focusedIdx={focusedIdx}
-              onToggleRead={handleToggleRead}
-              onSetFavFolders={handleSetFavFolders}
-              onRenameFavFolder={handleRenameFavFolder}
-              onUpdateNote={handleUpdateNote}
-              onBulkRead={handleBulkRead}
-              onPageChange={(p) => { setCurrentPage(p); setFocusedIdx(-1); }}
-              ttsConfig={ttsConfig}
-              onSpeakBookmark={(bm) => handleTtsSpeak(`From ${bm.authorName || bm.authorHandle}: ${cleanForVoice(bm.text)}`)}
-            />
+            <Feed {...feedProps} />
+            </>
+            )}
           </>
         )}
       </main>
       <RightPanel
+        onOpenSettings={() => setSettingsOpen(true)}
         bookmarks={allBookmarks}
         currentVoice={currentVoice}
         onVoiceClick={handleVoiceClick}
@@ -564,8 +924,12 @@ export default function App() {
         onSetClassifyBackend={handleSetClassifyBackend}
         syncSource={syncSource}
         onSetSyncSource={handleSetSyncSource}
+        syncBrowser={syncBrowser}
+        onSetSyncBrowser={handleSetSyncBrowser}
+        browserInfo={browserInfo}
         sourceInfo={sourceInfo}
       />
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
       {voicePlaying && (
         <VoiceBubble
           isPlaying={voicePlaying}

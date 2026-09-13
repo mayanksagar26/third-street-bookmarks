@@ -1,0 +1,301 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Local API hardening.
+//
+// "It's only localhost" is not a threat model. This server holds every bookmark
+// you've ever saved and can spawn a coding agent on your machine, so treat it
+// as what it is: an authenticated service that happens to have a short network
+// path. Three independent controls, because any one of them can be wrong:
+//
+//   1. Bind loopback only     — takes the LAN off the table entirely
+//   2. Per-launch bearer token — takes other local processes and websites off it
+//   3. Origin + Host checks    — takes DNS rebinding off it
+//
+// Layer 2 is the load-bearing one. A browser can reach 127.0.0.1 from any page
+// you visit; without a secret it cannot guess, every tab on the internet is a
+// client of this API.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+/** Origins that are always allowed to talk to the API: the Vite dev server. */
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+
+/**
+ * Everything allowed for a server on `port`: Vite, plus the server's own origin,
+ * since `npm start` serves the UI from the same port as the API and a
+ * same-origin POST still carries an Origin header.
+ */
+function allowedOrigins(port) {
+  const origins = new Set(ALLOWED_ORIGINS);
+  if (port) {
+    origins.add(`http://localhost:${port}`);
+    origins.add(`http://127.0.0.1:${port}`);
+  }
+  return origins;
+}
+
+/** Hostnames that can legitimately appear in a loopback request. */
+const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+const TOKEN_FILE = 'auth-token';
+
+/**
+ * Resolve the shared secret for this run.
+ *
+ * TSB_AUTH_TOKEN wins if set. Otherwise it lives in the data directory,
+ * owner-readable only, so the Vite dev proxy can pick it up.
+ */
+function resolveToken(dataDir) {
+  const fromEnv = process.env.TSB_AUTH_TOKEN;
+  if (fromEnv && fromEnv.length >= 32) return fromEnv;
+
+  const tokenPath = path.join(dataDir, TOKEN_FILE);
+  try {
+    const existing = fs.readFileSync(tokenPath, 'utf8').trim();
+    if (existing.length >= 32) return existing;
+  } catch {
+    // No token yet — fall through and mint one.
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  fs.writeFileSync(tokenPath, token, { mode: 0o600 });
+  // writeFileSync only applies mode on create; enforce it for pre-existing files.
+  try { fs.chmodSync(tokenPath, 0o600); } catch {}
+  return token;
+}
+
+/** Constant-time compare that tolerates length mismatch without leaking it. */
+function tokensMatch(provided, expected) {
+  if (typeof provided !== 'string' || provided.length !== expected.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+function presentedToken(req) {
+  const header = req.get('authorization');
+  if (header && header.startsWith('Bearer ')) return header.slice(7).trim();
+  // Fallback for the few places a header can't travel (media elements, links).
+  // Query strings land in logs and Referer headers, so it is not the default.
+  if (typeof req.query?.token === 'string') return req.query.token;
+  return null;
+}
+
+/**
+ * Guard every /api route.
+ *
+ * Order matters: Host before Origin before token, cheapest and most absolute
+ * first, so a rebinding probe is rejected before it can even measure timing on
+ * the token comparison.
+ */
+/**
+ * Host check — defeats DNS rebinding. A rebinding attack arrives with the
+ * attacker's hostname in Host, since the browser thinks it is still talking to
+ * evil.example.
+ */
+function hostAllowed(req) {
+  const host = (req.get('host') || '').toLowerCase();
+  const hostname = host.replace(/:\d+$/, '');
+  return ALLOWED_HOSTS.has(hostname);
+}
+
+function createGuard({ token, port }) {
+  const origins = allowedOrigins(port);
+  return function guard(req, res, next) {
+    // The readiness probe is deliberately unauthenticated. It reveals only that
+    // a server exists — which the open TCP port already reveals — and Boot needs
+    // it before it can do anything else.
+    if (req.path === '/api/health') return next();
+
+    // ── 1. Host — defeats DNS rebinding ─────────────────────────────────────
+    if (!hostAllowed(req)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    // Only the hostname is checked, not the port. A rebinding attack arrives as
+    // `evil.example:443` and is already rejected above; asserting the port as
+    // well buys nothing an attacker couldn't spoof anyway, and it breaks the
+    // legitimate case of the Vite dev proxy forwarding `localhost:5173`.
+
+    // ── 2. Origin — blocks cross-site reads from any page you visit ─────────
+    // Absent Origin means a non-browser client (curl, the app's own fetch on
+    // some paths); those still have to pass the token check below.
+    const origin = req.get('origin');
+    if (origin && !origins.has(origin)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    // ── 3. Token ────────────────────────────────────────────────────────────
+    if (!tokensMatch(presentedToken(req), token)) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    return next();
+  };
+}
+
+/**
+ * CORS, scoped to the origins above.
+ *
+ * Echoing the request's origin rather than sending `*` is required once
+ * credentials-ish headers are in play, and it means a disallowed origin gets no
+ * ACAO header at all — the browser blocks the read even if the request landed.
+ */
+function createCors({ port } = {}) {
+  const origins = allowedOrigins(port);
+  return function cors(req, res, next) {
+    const origin = req.get('origin');
+    if (origin && origins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Max-Age', '600');
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    return next();
+  };
+}
+
+/** Headers that cost nothing and close off whole categories of mistake. */
+function securityHeaders(req, res, next) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  next();
+}
+
+/**
+ * Validate a user-supplied file path before the server will touch it.
+ *
+ * `/api/adopt-bookmarks` takes a path from the client, so without this it is an
+ * arbitrary-file-read probe: point it anywhere, and the parse result tells you
+ * whether the file exists and what shape it is. Symlinks are resolved first,
+ * because a link inside the home directory can point anywhere outside it.
+ */
+function validateBookmarkPath(input) {
+  if (typeof input !== 'string' || input.length === 0 || input.length > 4096) {
+    throw new Error('Invalid path');
+  }
+  if (input.includes('\0')) throw new Error('Invalid path');
+
+  let resolved;
+  try {
+    resolved = fs.realpathSync(path.resolve(input));
+  } catch {
+    throw new Error('That file no longer exists');
+  }
+
+  const home = fs.realpathSync(os.homedir());
+  const withinHome = resolved === home || resolved.startsWith(home + path.sep);
+  if (!withinHome) {
+    throw new Error('Only files inside your home folder can be used');
+  }
+
+  if (path.extname(resolved).toLowerCase() !== '.json') {
+    throw new Error('Only .json files can be used');
+  }
+
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isFile()) throw new Error('Not a regular file');
+  if (stat.size > 512 * 1024 * 1024) throw new Error('That file is too large');
+
+  return resolved;
+}
+
+/** Reject oversized free-text before it reaches a subprocess argument list. */
+function validatePrompt(value, max = 24_000) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('prompt required');
+  }
+  if (value.length > max) {
+    throw new Error(`Prompt too long (max ${max} characters)`);
+  }
+  return value;
+}
+
+
+/**
+ * Validate a path an import is allowed to read.
+ *
+ * Same reasoning as validateBookmarkPath — symlink-resolved, home-scoped, so
+ * the endpoint can't be used to probe for files elsewhere on the machine — but
+ * generalised, because the platform exports arrive in shapes that one didn't
+ * anticipate: a Google Takeout playlist is .csv, and an Instagram export is a
+ * folder you point at rather than a single file.
+ */
+function validateImportPath(input, { extensions = ['.json'], allowDir = false } = {}) {
+  if (typeof input !== 'string' || input.length === 0 || input.length > 4096) {
+    throw new Error('Invalid path');
+  }
+  if (input.includes('\0')) throw new Error('Invalid path');
+
+  let resolved;
+  try {
+    resolved = fs.realpathSync(path.resolve(input));
+  } catch {
+    throw new Error('That file no longer exists');
+  }
+
+  const home = fs.realpathSync(os.homedir());
+  const withinHome = resolved === home || resolved.startsWith(home + path.sep);
+  if (!withinHome) throw new Error('Only files inside your home folder can be used');
+
+  const stat = fs.lstatSync(resolved);
+
+  if (stat.isDirectory()) {
+    if (!allowDir) throw new Error('That is a folder, not a file');
+    // The home directory itself would make the recursive scan below walk
+    // everything the user owns.
+    if (resolved === home) throw new Error('Pick the export folder, not your home folder');
+    return resolved;
+  }
+
+  if (!stat.isFile()) throw new Error('Not a regular file');
+  const ext = path.extname(resolved).toLowerCase();
+  if (!extensions.includes(ext)) {
+    throw new Error(`Only ${extensions.join(' or ')} files can be used`);
+  }
+  if (stat.size > 512 * 1024 * 1024) throw new Error('That file is too large');
+
+  return resolved;
+}
+
+/**
+ * Reduce a browser-supplied file name to something safe to join onto a path.
+ *
+ * `File.name` is usually a bare name, but `webkitdirectory` sends a relative
+ * path and nothing stops a caller posting whatever it likes to the endpoint.
+ * Taking the basename and refusing anything unusual is shorter and more
+ * auditable than trying to sanitise traversal out of a string — `..` and a
+ * leading `/` both simply cease to exist rather than being rewritten.
+ */
+function safeUploadName(name, allowedExt) {
+  const base = path.basename(String(name || '').replace(/\\/g, '/'));
+  if (!base || base === '.' || base === '..') throw new Error('Bad file name');
+  if (!/^[A-Za-z0-9._ -]{1,120}$/.test(base)) throw new Error(`Unusual file name: ${base}`);
+  const ext = path.extname(base).toLowerCase();
+  if (!allowedExt.includes(ext)) throw new Error(`${base} is not a ${allowedExt.join(' or ')} file`);
+  return base;
+}
+
+module.exports = {
+  ALLOWED_ORIGINS,
+  createCors,
+  createGuard,
+  hostAllowed,
+  resolveToken,
+  securityHeaders,
+  safeUploadName,
+  validateBookmarkPath,
+  validateImportPath,
+  validatePrompt,
+};

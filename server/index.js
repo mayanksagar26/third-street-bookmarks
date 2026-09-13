@@ -2,18 +2,90 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { detectRuntimes, findBinary } = require('./agents');
+const { discover } = require('./discover');
+const { agentEnv, buildAgentArgs, fenceUntrusted } = require('./agent-run');
+const store = require('./sources-store');
+const hn = require('./ingest/hn');
+const yt = require('./ingest/youtube');
+const ytTakeout = require('./ingest/youtube-takeout');
+const instagram = require('./ingest/instagram');
+const { extractWanted } = require('./ingest/zip');
+const linkIngest = require('./ingest/link');
+const {
+  createCors,
+  createGuard,
+  hostAllowed,
+  resolveToken,
+  securityHeaders,
+  safeUploadName,
+  validateBookmarkPath,
+  validateImportPath,
+  validatePrompt,
+} = require('./security');
 
 const app = express();
 const PORT = process.env.PORT || 3456;
 
-const BOOKMARKS_JSON = process.env.DATA_PATH
-  ? path.resolve(process.env.DATA_PATH)
-  : path.resolve(__dirname, '..', 'bookmarks.json');
+// Two roots, because data and code live in different places.
+//
+//   DATA_DIR   — writable: settings.json, sources/, imports/, auth-token
+//   SCRIPT_DIR — the Python helpers (classify.py, export.py)
+//
+// DATA_DIR defaults to ~/.tsb, the same directory the macOS app uses, so the
+// browser build and the desktop app open one collection with one read and
+// favourite history. TSB_DATA_DIR overrides it.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const DATA_DIR = process.env.TSB_DATA_DIR
+  ? path.resolve(process.env.TSB_DATA_DIR)
+  : path.join(os.homedir(), '.tsb');
+const SCRIPT_DIR = process.env.TSB_SCRIPT_DIR
+  ? path.resolve(process.env.TSB_SCRIPT_DIR)
+  : REPO_ROOT;
 
-const SETTINGS_PATH = path.resolve(__dirname, '..', 'settings.json');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const DEFAULT_BOOKMARKS_JSON = path.join(DATA_DIR, 'bookmarks.json');
+
+// Before 2.0 the browser build kept bookmarks.json and settings.json in the
+// repo root. Carry both across once, so an upgrade opens the collection you
+// already had instead of an empty feed and a setup screen.
+const LEGACY_BOOKMARKS_JSON = path.join(REPO_ROOT, 'bookmarks.json');
+const LEGACY_SETTINGS_JSON = path.join(REPO_ROOT, 'settings.json');
+
+(function migrateRepoRootData() {
+  const settingsPath = path.join(DATA_DIR, 'settings.json');
+  if (fs.existsSync(settingsPath)) return;
+  let legacy = {};
+  try { legacy = JSON.parse(fs.readFileSync(LEGACY_SETTINGS_JSON, 'utf8')); } catch {}
+  if (fs.existsSync(LEGACY_BOOKMARKS_JSON) && !fs.existsSync(DEFAULT_BOOKMARKS_JSON)) {
+    legacy.bookmarksPath = LEGACY_BOOKMARKS_JSON;
+  }
+  if (Object.keys(legacy).length) {
+    fs.writeFileSync(settingsPath, JSON.stringify(legacy, null, 2));
+  }
+})();
+
+// Resolved per call rather than frozen at boot: onboarding can point the app at
+// a collection it discovered elsewhere on disk, and that has to take effect
+// without a restart. Precedence is explicit override, then the user's choice,
+// then the app's own directory.
+function bookmarksPath() {
+  if (process.env.DATA_PATH) return path.resolve(process.env.DATA_PATH);
+  try {
+    const chosen = readSettings().bookmarksPath;
+    if (chosen && fs.existsSync(chosen)) return path.resolve(chosen);
+  } catch {
+    // Unreadable settings shouldn't take the feed down with them.
+  }
+  return DEFAULT_BOOKMARKS_JSON;
+}
+
+const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
 const FT = path.join(os.homedir(), '.npm-global/bin/ft');
-const CLASSIFY_PY = path.resolve(__dirname, '..', 'classify.py');
+const CLASSIFY_PY = path.join(SCRIPT_DIR, 'classify.py');
 
 // ── Sync source registry ──────────────────────────────────────────────────────
 // Must mirror client/src/sources.js. `bin` candidates are probed so the UI can
@@ -26,16 +98,60 @@ const SOURCES = {
     provides: ['bookmarks'],
     bins: [FT, path.join(os.homedir(), '.npm-global/bin/ft'), '/usr/local/bin/ft', '/opt/homebrew/bin/ft'],
   },
-  birdclaw: {
-    id: 'birdclaw',
-    label: 'birdclaw',
-    provides: ['bookmarks', 'likes', 'mentions', 'media', 'threads', 'digests', 'accounts'],
-    bins: ['/usr/local/bin/birdclaw', '/opt/homebrew/bin/birdclaw', path.join(os.homedir(), '.npm-global/bin/birdclaw'), path.join(os.homedir(), '.local/bin/birdclaw')],
-  },
 };
 
 function resolveBin(source) {
   return (SOURCES[source]?.bins || []).find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+}
+
+// ── Browser registry ──────────────────────────────────────────────────────────
+// Field Theory has no X session of its own: `ft sync` borrows cookies from a
+// locally installed browser. Which browser was hardcoded to Chrome, so anyone
+// who reads X in Brave, Comet, Arc or Firefox got a decrypted-but-stale cookie
+// and a 401 from X, with nothing in the UI to suggest the browser was the
+// problem. Mirrors fieldtheory's dist/browsers.js — ids must match, they are
+// passed straight through as `--browser <id>`.
+const BROWSERS = {
+  chrome:   { id: 'chrome',   label: 'Google Chrome',  dir: 'Library/Application Support/Google/Chrome' },
+  chromium: { id: 'chromium', label: 'Chromium',       dir: 'Library/Application Support/Chromium' },
+  brave:    { id: 'brave',    label: 'Brave',          dir: 'Library/Application Support/BraveSoftware/Brave-Browser' },
+  edge:     { id: 'edge',     label: 'Microsoft Edge', dir: 'Library/Application Support/Microsoft Edge' },
+  comet:    { id: 'comet',    label: 'Comet',          dir: 'Library/Application Support/Comet' },
+  dia:      { id: 'dia',      label: 'Dia',            dir: 'Library/Application Support/Dia/User Data' },
+  helium:   { id: 'helium',   label: 'Helium',         dir: 'Library/Application Support/net.imput.helium' },
+  firefox:  { id: 'firefox',  label: 'Firefox',        dir: 'Library/Application Support/Firefox' },
+};
+
+function browserDir(id) {
+  return BROWSERS[id] ? path.join(os.homedir(), BROWSERS[id].dir) : null;
+}
+
+// Newest cookie-store mtime under a browser's user-data dir, as an ISO string.
+//
+// Only the timestamp is read, never the file: it answers "when did you last
+// browse in this?", which is the one fact that makes a stale session obvious in
+// the picker. Chrome sitting three weeks behind Comet is the whole diagnosis.
+function lastCookieWrite(id) {
+  const root = browserDir(id);
+  if (!root) return null;
+  const names = id === 'firefox' ? ['cookies.sqlite'] : ['Cookies', 'Network/Cookies'];
+  let newest = 0;
+  const consider = (file) => {
+    try { newest = Math.max(newest, fs.statSync(file).mtimeMs); } catch {}
+  };
+  let entries = [];
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return null; }
+  for (const name of names) consider(path.join(root, name));
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    for (const name of names) consider(path.join(root, entry.name, name));
+  }
+  return newest ? new Date(newest).toISOString() : null;
+}
+
+function browserInstalled(id) {
+  const root = browserDir(id);
+  try { return !!root && fs.existsSync(root); } catch { return false; }
 }
 const EXTRA_PATH = '/usr/local/bin:/opt/homebrew/bin:' + path.join(os.homedir(), '.local/bin') +
   ':' + path.join(os.homedir(), '.npm-global/bin') +
@@ -44,7 +160,20 @@ const DB_PATH = process.env.FT_DB
   ? path.resolve(process.env.FT_DB)
   : path.join(os.homedir(), '.ft-bookmarks', 'bookmarks.db');
 
+// A browser can reach 127.0.0.1 from any page you visit, so the API refuses
+// anything without this per-launch token. The built UI gets it written into
+// index.html below; the Vite dev proxy reads it from DATA_DIR/auth-token.
+const AUTH_TOKEN = resolveToken(DATA_DIR);
+
+app.disable('x-powered-by');
+app.use(securityHeaders);
+app.use(createCors({ port: PORT }));
 app.use(express.json({ limit: '10mb' }));
+
+// Readiness, before the guard, revealing nothing the open port doesn't.
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+app.use('/api', createGuard({ token: AUTH_TOKEN, port: PORT }));
 
 // ── Field Theory's SQLite (read-only here: used once to migrate legacy UI state
 //    into the app-owned state.db below) ────────────────────────────────────────
@@ -73,7 +202,7 @@ function openDb() {
 
 
 // ── App-owned State DB (source of truth for YOUR actions) ─────────────────────
-// Lives at ~/.tsb/state.db, independent of Field Theory / birdclaw. Owns read,
+// Lives at ~/.tsb/state.db, independent of the sync source. Owns read,
 // favourite, colour-label, note and per-author voice prefs, keyed by tweet id.
 // Applied on every read, so no sync from any source can ever reset your history.
 const STATE_DB_PATH = process.env.STATE_DB
@@ -126,12 +255,12 @@ function migrateState(conn) {
   if (userStateEmpty) {
     let seeded = 0;
     try {
-      const data = JSON.parse(fs.readFileSync(BOOKMARKS_JSON, 'utf8'));
+      const data = JSON.parse(fs.readFileSync(bookmarksPath(), 'utf8'));
       const ins = conn.prepare(`INSERT OR IGNORE INTO user_state (id, is_read, fav_folder, color_label, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)`);
       const tx = conn.transaction(rows => {
         for (const b of rows) {
           if (b.isRead || b.favFolder || (b.favFolders && b.favFolders.length) || b.colorLabel || b.note) {
-            ins.run(b.id, b.isRead ? 1 : 0, b.favFolder || (b.favFolders && b.favFolders[0]) || null, b.colorLabel || null, b.note || null, now);
+            ins.run(store.nsId('x', b.id), b.isRead ? 1 : 0, b.favFolder || (b.favFolders && b.favFolders[0]) || null, b.colorLabel || null, b.note || null, now);
             seeded++;
           }
         }
@@ -147,7 +276,7 @@ function migrateState(conn) {
             is_read     = COALESCE(excluded.is_read,     is_read),
             fav_folder  = COALESCE(excluded.fav_folder,  fav_folder),
             color_label = COALESCE(excluded.color_label, color_label)`);
-        const tx = conn.transaction(rs => { for (const r of rs) up.run(r.id, r.is_read, r.fav_folder, r.color_label, now); });
+        const tx = conn.transaction(rs => { for (const r of rs) up.run(store.nsId('x', r.id), r.is_read, r.fav_folder, r.color_label, now); });
         tx(rows);
       }
     } catch {}
@@ -165,14 +294,50 @@ function migrateState(conn) {
           ins.run(r.id, r.fav_folder, now);
         }
         try {
-          const data = JSON.parse(fs.readFileSync(BOOKMARKS_JSON, 'utf8'));
-          for (const b of data) for (const f of (b.favFolders || [])) if (f) ins.run(b.id, f, now);
+          const data = JSON.parse(fs.readFileSync(bookmarksPath(), 'utf8'));
+          for (const b of data) for (const f of (b.favFolders || [])) if (f) ins.run(store.nsId('x', b.id), f, now);
         } catch {}
       });
       tx();
       console.log(`  [state.db] fav_membership rows: ${conn.prepare('SELECT COUNT(*) c FROM fav_membership').get().c}`);
     }
   } catch {}
+
+  migrateIds(conn);
+}
+
+/**
+ * Namespace every id written before this app had more than one source.
+ *
+ * Those rows are keyed by a bare tweet id. Once Hacker News is in the same
+ * table, item 12345 and tweet 12345 are the same key — the HN story silently
+ * inherits the tweet's read state and favourite folders. That reads as data
+ * corruption and is near-impossible to trace, so it gets fixed once, here,
+ * before any second source can write a row.
+ *
+ * Guarded by a marker rather than by checking the rows, because a legitimately
+ * empty table would otherwise re-run this on every boot.
+ */
+function migrateIds(conn) {
+  try {
+    conn.exec('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)');
+    const done = conn.prepare("SELECT value FROM schema_meta WHERE key = 'ids_namespaced'").get();
+    if (done) return;
+
+    // OR REPLACE rather than a plain UPDATE: if a namespaced row somehow
+    // already exists alongside its bare twin, the namespaced one is the newer
+    // truth and a PK collision here would abort the whole migration.
+    const tx = conn.transaction(() => {
+      conn.exec("UPDATE OR REPLACE user_state     SET id = 'x:' || id WHERE instr(id, ':') = 0");
+      conn.exec("UPDATE OR REPLACE fav_membership SET id = 'x:' || id WHERE instr(id, ':') = 0");
+      conn.prepare("INSERT INTO schema_meta (key, value) VALUES ('ids_namespaced', ?)")
+        .run(new Date().toISOString());
+    });
+    tx();
+    console.log('  [state.db] namespaced legacy ids to x:');
+  } catch (e) {
+    console.log(`  [state.db] id migration skipped: ${e.message}`);
+  }
 }
 
 // Partial upsert: only writes the fields present in `fields`, so null is a real
@@ -203,6 +368,26 @@ function favGetFolders(id) {
   if (!conn) return [];
   try { return conn.prepare('SELECT folder FROM fav_membership WHERE id = ? ORDER BY folder').all(id).map(r => r.folder); }
   catch { return []; }
+}
+
+/**
+ * Every folder that exists, newest use first.
+ *
+ * The client cannot derive this from the bookmarks it has loaded: a folder
+ * whose members all sit outside the current collection would simply vanish,
+ * taking its name out of the picker and leaving no way to file anything into
+ * it again. state.db is the only place that knows the full set.
+ */
+function favAllFolders() {
+  const conn = openStateDb();
+  if (!conn) return [];
+  try {
+    return conn.prepare(`
+      SELECT folder, COUNT(*) AS count, MAX(created_at) AS lastUsed
+      FROM fav_membership
+      GROUP BY folder
+      ORDER BY lastUsed DESC, folder ASC`).all();
+  } catch { return []; }
 }
 
 // Replace a bookmark's folder set with `folders` (the desired full list).
@@ -266,9 +451,13 @@ function applyState(list) {
   return list;
 }
 
-const DIST = path.join(__dirname, '..', 'client', 'dist');
+// The built UI (`npm run build`). `index: false` so `/` falls through to the
+// catch-all at the bottom, which writes the API token into the page.
+const DIST = process.env.TSB_DIST
+  ? path.resolve(process.env.TSB_DIST)
+  : path.join(REPO_ROOT, 'client', 'dist');
 if (fs.existsSync(DIST)) {
-  app.use(express.static(DIST));
+  app.use(express.static(DIST, { index: false }));
 }
 
 // ── Process tracking ──────────────────────────────────────────────────────────
@@ -295,9 +484,30 @@ function runProc(key, cmd, args, onDone) {
 }
 
 // ── Settings I/O ──────────────────────────────────────────────────────────────
+const SETTINGS_DEFAULTS = {
+  aiBackend: 'claude',
+  classifyBackend: 'python',
+  syncSource: 'fieldtheory',
+  syncBrowser: 'chrome',
+};
+
 function readSettings() {
-  try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')); }
-  catch { return { aiBackend: 'claude', classifyBackend: 'python', syncSource: 'fieldtheory' }; }
+  let stored;
+  try { stored = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')); }
+  catch { return { ...SETTINGS_DEFAULTS }; }
+
+  const settings = { ...SETTINGS_DEFAULTS, ...stored };
+
+  // Settings outlive the code that wrote them. A source that has since been
+  // removed — birdclaw, since 2.0 — would otherwise leave the UI
+  // pointing at a backend that no longer exists.
+  if (!SOURCES[settings.syncSource]) settings.syncSource = SETTINGS_DEFAULTS.syncSource;
+
+  // Same for the browser: an id we don't recognise would reach `ft` as an
+  // unknown --browser and fail the sync at spawn time.
+  if (!BROWSERS[settings.syncBrowser]) settings.syncBrowser = SETTINGS_DEFAULTS.syncBrowser;
+
+  return settings;
 }
 
 function writeSettings(data) {
@@ -305,12 +515,26 @@ function writeSettings(data) {
 }
 
 // ── Bookmarks I/O ─────────────────────────────────────────────────────────────
+function readXBookmarks() {
+  // A fresh install has no collection yet — that's an empty feed, not a 500.
+  // The UI's empty state tells the user to run a sync.
+  if (!fs.existsSync(bookmarksPath())) return [];
+  return JSON.parse(fs.readFileSync(bookmarksPath(), 'utf8'));
+}
+
+function writeXBookmarks(data) {
+  fs.writeFileSync(bookmarksPath(), JSON.stringify(data, null, 2));
+}
+
+// Everything below this line sees one collection. The split back into
+// per-source files happens in the store, because callers mutate a single record
+// inside the merged array and hand the whole thing back.
 function readBookmarks() {
-  return JSON.parse(fs.readFileSync(BOOKMARKS_JSON, 'utf8'));
+  return store.readAll(DATA_DIR, readXBookmarks);
 }
 
 function writeBookmarks(data) {
-  fs.writeFileSync(BOOKMARKS_JSON, JSON.stringify(data, null, 2));
+  store.writeAll(DATA_DIR, data, writeXBookmarks);
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -340,81 +564,398 @@ app.get('/api/sources', (req, res) => {
   });
 });
 
-// ── birdclaw-only feature endpoints (read its SQLite directly) ────────────────
-const BIRDCLAW_DB_PATH = path.join(os.homedir(), '.birdclaw', 'birdclaw.sqlite');
-const BC_EXPORT_PY = path.resolve(__dirname, '..', 'birdclaw_export.py');
-
-function openBirdclawDb() {
-  if (!fs.existsSync(BIRDCLAW_DB_PATH)) return null;
-  try {
-    const Database = require('better-sqlite3');
-    return new Database(BIRDCLAW_DB_PATH, { readonly: true });
-  } catch { return null; }
-}
-
-// Liked tweets — export via birdclaw_export.py --stdout (reuses the mapper).
-app.get('/api/birdclaw/likes', (req, res) => {
-  if (!fs.existsSync(BIRDCLAW_DB_PATH)) return res.json({ ok: false, msg: 'No birdclaw DB — run `birdclaw init`', items: [] });
-  const proc = spawn('python3', [BC_EXPORT_PY, '--kind', 'likes', '--stdout'], {
-    env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
-  });
-  let out = '', err = '';
-  proc.stdout.on('data', d => { out += d.toString(); });
-  proc.stderr.on('data', d => { err += d.toString(); });
-  proc.on('close', code => {
-    if (code !== 0) return res.json({ ok: false, msg: err.trim() || 'export failed', items: [] });
-    try { res.json({ ok: true, items: JSON.parse(out) }); }
-    catch { res.json({ ok: false, msg: 'parse error', items: [] }); }
-  });
-  proc.on('error', e => res.json({ ok: false, msg: e.message, items: [] }));
+// Which browsers this Mac has, and when each last wrote a cookie. `lastActive`
+// is the hint that matters: the browser you actually read X in is the one that
+// wrote cookies today, and that is the one `ft` must be pointed at.
+app.get('/api/browsers', (req, res) => {
+  const active = readSettings().syncBrowser || 'chrome';
+  const browsers = Object.values(BROWSERS)
+    .map(b => ({ id: b.id, label: b.label, installed: browserInstalled(b.id), lastActive: lastCookieWrite(b.id) }))
+    // A user-data dir with no cookie store — Edge and Brave both leave one
+    // behind unused on this machine — cannot hold an X session, so it is noise
+    // in a picker. The current selection stays regardless, or changing away
+    // from a dead browser would mean picking from a list it isn't in.
+    .filter(b => b.installed && (b.lastActive || b.id === active))
+    // Most recently used first: the browser you read X in sorts to the top,
+    // which is nearly always the one that can actually sync.
+    .sort((x, y) => (y.lastActive || '').localeCompare(x.lastActive || ''));
+  res.json({ active, browsers });
 });
 
-// Inbox triage — AI-ranked mentions from the ai_scores table joined to tweets.
-app.get('/api/birdclaw/inbox', (req, res) => {
-  const db = openBirdclawDb();
-  if (!db) return res.json({ ok: false, msg: 'No birdclaw DB — run `birdclaw init`', items: [] });
+// ── AI runtimes ───────────────────────────────────────────────────────────────
+// Which coding CLIs are on this machine, which version, and whether they're
+// signed in. Onboarding blocks on this, so it must always answer.
+app.get('/api/agents/detect', async (req, res) => {
   try {
-    const rows = db.prepare(`
-      SELECT s.entity_id AS id, s.score, s.summary, s.reasoning,
-             t.text, t.created_at, p.handle, p.display_name, p.avatar_url
-      FROM ai_scores s
-      LEFT JOIN tweets t   ON t.id = s.entity_id
-      LEFT JOIN profiles p ON p.id = t.author_profile_id
-      ORDER BY s.score DESC
-      LIMIT 100
-    `).all();
-    db.close();
-    res.json({ ok: true, items: rows.map(r => ({
-      id: r.id, score: r.score, summary: r.summary, reasoning: r.reasoning,
-      text: r.text, postedAt: r.created_at,
-      authorHandle: r.handle, authorName: r.display_name, authorProfileImageUrl: r.avatar_url,
-    })) });
+    const runtimes = await detectRuntimes();
+    const settings = readSettings();
+    res.json({ runtimes, active: settings.aiBackend || 'claude' });
   } catch (e) {
-    try { db.close(); } catch {}
-    res.json({ ok: false, msg: e.message, items: [] });
+    res.status(500).json({ error: e.message, runtimes: [] });
   }
 });
 
-// AI digest — runs birdclaw's own digest command (needs the CLI + Node 25).
-app.get('/api/birdclaw/digest', (req, res) => {
-  const bin = resolveBin('birdclaw');
-  if (!bin) return res.json({ ok: false, needsCli: true, msg: 'birdclaw CLI not found — install it (needs Node ≥25) to generate digests', text: '' });
-  const period = req.query.period === 'week' ? ['digest', 'week'] : ['today'];
-  const proc = spawn(bin, period, { env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH } });
-  let out = '', err = '';
-  proc.stdout.on('data', d => { out += d.toString(); });
-  proc.stderr.on('data', d => { err += d.toString(); });
-  proc.on('close', code => {
-    if (code !== 0) {
-      const nodeVer = /ERR_INVALID_MODULE|esm\/resolve|Unsupported engine|SyntaxError/.test(err);
-      const msg = nodeVer
-        ? 'birdclaw needs Node ≥25 to run — upgrade Node, then `birdclaw init` and authenticate'
-        : (err.trim().split('\n').find(l => l.trim() && !l.startsWith('node:')) || 'digest failed');
-      return res.json({ ok: false, needsCli: true, msg, text: '' });
+// ── Bookmark discovery ────────────────────────────────────────────────────────
+// Streams NDJSON progress events, then a final `{ type: 'result', ... }` line.
+// A plain JSON response would leave the user watching a spinner for the length
+// of a filesystem walk plus an agent turn.
+app.post('/api/discover-bookmarks', async (req, res) => {
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  const settings = readSettings();
+  const runtime = req.body?.runtime || settings.aiBackend || 'claude';
+  const binary = findBinary(runtime === 'codex' ? 'codex' : 'claude');
+
+  const send = obj => {
+    if (!res.writableEnded) res.write(JSON.stringify(obj) + '\n');
+  };
+
+  try {
+    const result = await discover({
+      runtime,
+      binary,
+      onEvent: event => send({ type: 'progress', ...event }),
+    });
+    send({ type: 'result', ...result, agentAvailable: Boolean(binary) });
+  } catch (e) {
+    send({ type: 'error', message: e.message });
+  }
+  if (!res.writableEnded) res.end();
+});
+
+// Point the app at a discovered collection. Stores the path rather than copying
+// the file, so a later `ft sync` still writes where the user expects.
+app.post('/api/adopt-bookmarks', (req, res) => {
+  let resolved;
+  try {
+    // Symlink-resolved, home-scoped, .json only. Without this the endpoint is
+    // an arbitrary-file-read probe: the parse result tells a caller whether any
+    // path on the machine exists and what shape it has.
+    resolved = validateBookmarkPath(req.body?.path);
+  } catch (e) {
+    return res.status(400).json({ ok: false, msg: e.message });
+  }
+
+  let count = 0;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+    const records = Array.isArray(parsed) ? parsed : parsed?.bookmarks;
+    if (!Array.isArray(records)) throw new Error('not a bookmark array');
+    count = records.length;
+  } catch (e) {
+    return res.status(400).json({ ok: false, msg: `Could not read that file: ${e.message}` });
+  }
+
+  writeSettings({ ...readSettings(), bookmarksPath: resolved });
+  res.json({ ok: true, path: resolved, count });
+});
+
+// ── Sources ───────────────────────────────────────────────────────────────────
+// How many bookmarks each source contributes, for the sidebar's source list.
+app.get('/api/source-counts', (req, res) => {
+  try { res.json(store.counts(readBookmarks())); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Add records to a source and report what landed.
+ *
+ * Shared by every ingest route so "saved 3, 12 already there" is worded the
+ * same everywhere, and so no route can forget that re-importing is normal.
+ */
+function ingest(source, records) {
+  const { added, total } = store.upsertSource(DATA_DIR, source, records);
+  return { ok: true, added, skipped: records.length - added, total };
+}
+
+// ── Hacker News ───────────────────────────────────────────────────────────────
+// Browsing is live and stores nothing. Only an explicit save writes, because a
+// front page that imported itself every morning would bury the things you
+// actually chose to keep.
+app.get('/api/hn/top', async (req, res) => {
+  try {
+    const stories = await hn.topStories({ tab: req.query.tab, limit: req.query.limit });
+    const saved = new Set(store.readSource(DATA_DIR, 'hn').map(r => r.id));
+    res.json(stories.map(s => ({ ...s, alreadySaved: saved.has(s.id) })));
+  } catch (e) {
+    res.status(502).json({ error: `Hacker News is not reachable: ${e.message}` });
+  }
+});
+
+/**
+ * Save one story.
+ *
+ * The client posts back a record it got from /api/hn/top, but it is rebuilt
+ * here from named fields rather than stored as sent — a route that writes
+ * whatever shape arrives is a route that will eventually write something else
+ * into the collection.
+ */
+app.post('/api/hn/save', (req, res) => {
+  const item = req.body?.item || {};
+  const rawId = String(item.rawId || item.id || '').replace(/^hn:/, '');
+  if (!/^\d+$/.test(rawId)) return res.status(400).json({ error: 'not a Hacker News id' });
+  try {
+    const record = hn.toRecord({
+      objectID: rawId,
+      title: String(item.title || '').slice(0, 500),
+      url: item.url && /^https?:\/\//i.test(item.url) ? item.url : undefined,
+      author: String(item.authorHandle || '').slice(0, 100) || undefined,
+      points: Number(item.points) || 0,
+      num_comments: Number(item.commentCount) || 0,
+      created_at: item.postedAt,
+      story_text: String(item.text || '').slice(0, 20000),
+    });
+    res.json({ ...ingest('hn', [record]), record });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Save any URL ──────────────────────────────────────────────────────────────
+// The route that makes this a bookmark manager rather than three integrations.
+// YouTube is split out because oEmbed gives better metadata than the page does.
+app.post('/api/save-url', async (req, res) => {
+  const raw = String(req.body?.url || '').trim();
+  if (!/^https?:\/\//i.test(raw)) {
+    return res.status(400).json({ error: 'Paste a full http(s) URL' });
+  }
+  try {
+    if (yt.videoId(raw)) {
+      const record = await yt.viaOembed(raw);
+      return res.json({ ...ingest('yt', [record]), record, source: 'yt' });
     }
-    res.json({ ok: true, text: out.trim() });
+    const record = await linkIngest.saveUrl(raw);
+    res.json({ ...ingest('link', [record]), record, source: 'link' });
+  } catch (e) {
+    res.status(502).json({ error: `Could not save that link: ${e.message}` });
+  }
+});
+
+// ── YouTube playlist (public, API key only — no OAuth consent screen) ─────────
+app.post('/api/youtube/playlist', async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  const apiKey = String(req.body?.apiKey || readSettings().youtubeApiKey || '').trim();
+  if (!url) return res.status(400).json({ error: 'Paste a playlist URL' });
+  if (!apiKey) return res.status(400).json({ error: 'Add a YouTube API key in Settings first' });
+  try {
+    const { title, records } = await yt.importPlaylist({ url, apiKey });
+    if (!records.length) return res.status(404).json({ error: 'That playlist is empty or not public' });
+    res.json({ ...ingest('yt', records), playlist: title });
+  } catch (e) {
+    const hint = /HTTP 403/.test(e.message)
+      ? ' — check the key has the YouTube Data API enabled'
+      : /HTTP 404/.test(e.message) ? ' — that playlist is private or does not exist' : '';
+    res.status(502).json({ error: `${e.message}${hint}` });
+  }
+});
+
+// ── Uploading an export ───────────────────────────────────────────────────────
+//
+// Typing a path works, but only once you know what a path is and where macOS
+// put the unzip. Picking the files is the same job without that step.
+//
+// Uploaded files land in the app's own data directory beside everything else it
+// owns — `~/.tsb/imports/<source>/` next to `sources/`, `state.db` and
+// `settings.json`. That directory is the database; the repo is not. Nothing an
+// import writes should ever land somewhere a `git status` would notice.
+
+/** What each source is allowed to send, and how much of it. */
+const UPLOAD_KINDS = {
+  ig: { ext: ['.json'], label: 'Instagram export' },
+  yt: { ext: ['.csv'],  label: 'Takeout playlists' },
+};
+const UPLOAD_MAX_FILES = 60;
+const UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
+// Archives are the whole account, so the ceiling is about refusing a runaway
+// stream rather than about any export being expected to approach it.
+const ZIP_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+
+/**
+ * Take the archive itself, and keep only the part this app is for.
+ *
+ * An Instagram export is the whole account — every photo, every message, your
+ * login history. Asking you to unzip it and go find two JSON files is asking
+ * you to do the computer's job; storing the unzipped result would make the
+ * app's data directory a copy of your Instagram account.
+ *
+ * So the archive streams to a temporary file, `unzip` pulls out only the
+ * entries matching this source's patterns, and the temporary file is deleted
+ * before the response is written. What is kept is a few hundred kilobytes of
+ * URLs. Nothing else is ever decompressed.
+ *
+ * The body is piped rather than buffered: these archives run to gigabytes, and
+ * `express.raw` would hold the whole thing in memory to hand us a Buffer we
+ * would only write straight to disk.
+ */
+app.post('/api/import/upload-zip', (req, res) => {
+  const source = String(req.query?.source || '');
+  if (!UPLOAD_KINDS[source]) return res.status(400).json({ error: 'Unknown import source' });
+
+  const importsRoot = path.join(DATA_DIR, 'imports');
+  fs.mkdirSync(importsRoot, { recursive: true });
+  const tmp = path.join(importsRoot, `.upload-${crypto.randomBytes(8).toString('hex')}.zip`);
+  const dest = path.join(importsRoot, source);
+
+  const cleanup = () => { try { fs.rmSync(tmp, { force: true }); } catch {} };
+
+  const out = fs.createWriteStream(tmp);
+  let bytes = 0;
+  let aborted = false;
+
+  req.on('data', chunk => {
+    bytes += chunk.length;
+    if (bytes > ZIP_MAX_BYTES && !aborted) {
+      aborted = true;
+      out.destroy();
+      cleanup();
+      res.status(413).json({ error: 'That archive is larger than 4 GB' });
+      req.destroy();
+    }
   });
-  proc.on('error', e => res.json({ ok: false, needsCli: true, msg: e.message, text: '' }));
+
+  req.on('aborted', () => { aborted = true; out.destroy(); cleanup(); });
+
+  req.pipe(out);
+
+  out.on('error', () => {
+    if (aborted) return;
+    aborted = true;
+    cleanup();
+    if (!res.headersSent) res.status(500).json({ error: 'Could not save the upload' });
+  });
+
+  out.on('finish', async () => {
+    if (aborted) return;
+    try {
+      if (!bytes) throw new Error('Nothing was uploaded');
+      const { files, bytes: kept } = await extractWanted(tmp, source, dest);
+      cleanup();
+      res.json({ ok: true, dir: dest, files, kept, archiveBytes: bytes });
+    } catch (e) {
+      cleanup();
+      if (!res.headersSent) res.status(400).json({ error: e.message });
+    }
+  });
+});
+
+app.post('/api/import/upload', (req, res) => {
+  const source = String(req.body?.source || '');
+  const kind = UPLOAD_KINDS[source];
+  if (!kind) return res.status(400).json({ error: 'Unknown import source' });
+
+  const files = Array.isArray(req.body?.files) ? req.body.files : [];
+  if (!files.length) return res.status(400).json({ error: 'No files selected' });
+  if (files.length > UPLOAD_MAX_FILES) {
+    return res.status(400).json({ error: `Too many files — ${UPLOAD_MAX_FILES} at most` });
+  }
+
+  let total = 0;
+  const staged = [];
+  try {
+    for (const f of files) {
+      const name = safeUploadName(f?.name, kind.ext);
+      const content = typeof f?.content === 'string' ? f.content : '';
+      total += Buffer.byteLength(content, 'utf8');
+      if (total > UPLOAD_MAX_BYTES) throw new Error('That export is larger than 32 MB');
+      staged.push({ name, content });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+
+  const dir = path.join(DATA_DIR, 'imports', source);
+  try {
+    // Replace rather than merge. An upload means "this is my export now", and
+    // leaving last month's files behind would resurrect posts you have since
+    // unsaved, with no way to tell where they came from.
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of staged) fs.writeFileSync(path.join(dir, f.name), f.content);
+  } catch (e) {
+    return res.status(500).json({ error: `Could not save the upload: ${e.message}` });
+  }
+
+  res.json({ ok: true, dir, files: staged.map(f => f.name) });
+});
+
+// ── Instagram (official export) ───────────────────────────────────────────────
+// Where to go to request it. Surfaced by the server so the button in the UI and
+// the docs can never drift apart.
+app.get('/api/instagram/download-urls', (req, res) => res.json(instagram.DOWNLOAD_URLS));
+
+/**
+ * Two-phase, both here.
+ *
+ * Without `only`, this reads the export and answers with the collection names
+ * and their sizes — nothing is written. With `only`, it imports just those.
+ * That ordering is the feature: the point of an export over a live scrape is
+ * that you choose the three collections you want, not everything you ever
+ * tapped save on.
+ */
+app.post('/api/import/instagram', (req, res) => {
+  let target;
+  try {
+    // An `uploaded: true` request means the files came through /api/import/upload
+    // and already live in the app's own directory, so the home-scoped validator
+    // — which exists to stop this endpoint reading arbitrary user files — has
+    // nothing to check. The path is ours, not theirs.
+    target = req.body?.uploaded
+      ? path.join(DATA_DIR, 'imports', 'ig')
+      : validateImportPath(req.body?.path, { extensions: ['.json'], allowDir: true });
+    if (!fs.existsSync(target)) throw new Error('Nothing uploaded yet');
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  try {
+    const only = Array.isArray(req.body?.only) ? req.body.only : null;
+    const { files, collections, records } = instagram.readExport(target, { only });
+    if (!only) return res.json({ preview: true, files, collections });
+    res.json({ ...ingest('ig', records), collections, files });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ── YouTube (Google Takeout) ──────────────────────────────────────────────────
+// The only route to Watch Later: Google removed API access to it in 2016.
+app.post('/api/import/youtube', async (req, res) => {
+  let target;
+  try {
+    // An `uploaded: true` request means the files came through /api/import/upload
+    // and already live in the app's own directory, so the home-scoped validator
+    // — which exists to stop this endpoint reading arbitrary user files — has
+    // nothing to check. The path is ours, not theirs.
+    target = req.body?.uploaded
+      ? path.join(DATA_DIR, 'imports', 'yt')
+      : validateImportPath(req.body?.path, { extensions: ['.csv'], allowDir: true });
+    if (!fs.existsSync(target)) throw new Error('Nothing uploaded yet');
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  try {
+    const only = Array.isArray(req.body?.only) ? req.body.only : null;
+    const { files, playlists, records } = ytTakeout.readTakeout(target, { only });
+    if (!only) return res.json({ preview: true, files, collections: playlists });
+    // A Takeout CSV is video ids and nothing else. Without this the import
+    // succeeds and leaves you with a screen of identical untitled rows.
+    await yt.enrichTitles(records);
+    res.json({ ...ingest('yt', records), collections: playlists, files });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Remove a saved item. Only sources this app owns — X records come back on the
+// next `ft sync`, so deleting one here would be a button that undoes itself.
+app.delete('/api/saved/:id', (req, res) => {
+  const { source } = store.splitId(req.params.id);
+  if (!store.MANAGED.includes(source)) {
+    return res.status(400).json({ error: 'That bookmark belongs to a synced source' });
+  }
+  const removed = store.removeFromSource(DATA_DIR, source, req.params.id);
+  res.json({ ok: true, removed });
 });
 
 // ── Voice preferences (per-author → TTS provider/voice), owned by state.db ─────
@@ -452,21 +993,8 @@ app.get('/api/bookmarks', (req, res) => {
   }
 });
 
-app.post('/api/read/:id', (req, res) => {
-  try {
-    const { id } = req.params;
-    const data = readBookmarks();
-    const bm = data.find(b => b.id === id || b.tweetId === id);
-    if (!bm) return res.status(404).json({ error: 'Not found' });
-    bm.isRead = !bm.isRead;
-    writeBookmarks(data);
-    stateUpsert(bm.id, { isRead: bm.isRead });
-    res.json({ isRead: bm.isRead });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
+// Registered ahead of '/api/read/:id': Express matches in order, and the
+// parameterised route would otherwise swallow this path as id="bulk".
 app.post('/api/read/bulk', (req, res) => {
   try {
     const { ids, read } = req.body;
@@ -484,7 +1012,28 @@ app.post('/api/read/bulk', (req, res) => {
   }
 });
 
+app.post('/api/read/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = readBookmarks();
+    const bm = data.find(b => b.id === id || b.tweetId === id);
+    if (!bm) return res.status(404).json({ error: 'Not found' });
+    bm.isRead = !bm.isRead;
+    writeBookmarks(data);
+    stateUpsert(bm.id, { isRead: bm.isRead });
+    res.json({ isRead: bm.isRead });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 // Rename a folder across every bookmark (defined before /:id so it isn't shadowed).
+app.get('/api/fav-folders', (req, res) => {
+  try { res.json(favAllFolders()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/fav-rename', (req, res) => {
   try {
     const { from, to } = req.body || {};
@@ -645,8 +1194,12 @@ app.get('/api/tts/voices', async (req, res) => {
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 app.post('/api/chat', (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'prompt required' });
+  let prompt;
+  try {
+    prompt = validatePrompt(req.body?.prompt);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
 
   const settings = readSettings();
   const backend = settings.aiBackend || 'claude';
@@ -655,17 +1208,9 @@ app.post('/api/chat', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Accel-Buffering', 'no');
 
-  let cmd, args;
-  if (backend === 'codex') {
-    cmd = 'codex';
-    args = ['--full-auto', '-q', prompt];
-  } else {
-    cmd = 'claude';
-    args = ['-p', prompt];
-  }
-
-  const proc = spawn(cmd, args, {
-    env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
+  const cmd = backend === 'codex' ? 'codex' : 'claude';
+  const proc = spawn(cmd, buildAgentArgs(backend, prompt), {
+    env: agentEnv(EXTRA_PATH),
   });
 
   proc.stdout.on('data', d => { if (!res.writableEnded) res.write(d); });
@@ -686,6 +1231,74 @@ const CATEGORIES = [
   'leadership','marketing','policy','science','misc',
 ];
 
+/**
+ * Explain one bookmark.
+ *
+ * The prompt is built here rather than accepted from the client, for two
+ * reasons. The fencing has to wrap content the caller cannot choose, or it
+ * protects nothing. And the elevated `WebSearch` permission is granted per
+ * request, so the request had better describe a bookmark that actually exists
+ * rather than arbitrary text someone posted to the port.
+ */
+app.post('/api/explain', (req, res) => {
+  const id = String(req.body?.id || '');
+  let bm;
+  try {
+    bm = readBookmarks().find(b => b.id === id || b.tweetId === id);
+  } catch {
+    return res.status(500).json({ error: 'could not read the collection' });
+  }
+  if (!bm) return res.status(404).json({ error: 'No such bookmark' });
+
+  const settings = readSettings();
+  const backend = settings.aiBackend || 'claude';
+  // Opt-out lives in settings; the button asks for it, the user can refuse.
+  const web = settings.aiWebSearch !== false;
+
+  const facts = [
+    bm.title ? `Title: ${bm.title}` : null,
+    bm.authorName || bm.authorHandle ? `Author: ${bm.authorName || ''} ${bm.authorHandle ? `(@${bm.authorHandle})` : ''}`.trim() : null,
+    `Source: ${bm.sourceLabel || bm.source || 'X'}`,
+    bm.url ? `URL: ${bm.url}` : null,
+    bm.postedAt ? `Posted: ${bm.postedAt}` : null,
+    bm.points ? `Hacker News points: ${bm.points}` : null,
+  ].filter(Boolean).join('\n');
+
+  const prompt = [
+    'You are explaining one saved bookmark to the person who saved it.',
+    '',
+    fenceUntrusted('bookmark', `${facts}\n\n${(bm.text || '').slice(0, 6000)}`),
+    '',
+    'Write a short brief, in this order and with these headings:',
+    '',
+    '**What it is** — one or two sentences, plainly.',
+    '**Why it matters** — the point a reader would take away.',
+    '**Context** — what has happened around this since, or what a reader needs',
+    'to know to place it. Say plainly if you are unsure.',
+    '',
+    web
+      ? 'You may use WebSearch to check current context. Cite what you found by name.'
+      : 'Web search is switched off, so answer from the bookmark and what you already know.',
+    '',
+    'No preamble, no restating the task. Under 200 words. If the bookmark is too',
+    'thin to say anything useful, say exactly that instead of padding.',
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  const cmd = backend === 'codex' ? 'codex' : 'claude';
+  const proc = spawn(cmd, buildAgentArgs(backend, prompt, { web }), { env: agentEnv(EXTRA_PATH) });
+  proc.stdout.on('data', d => { if (!res.writableEnded) res.write(d); });
+  proc.stderr.on('data', () => {});
+  proc.on('close', () => { if (!res.writableEnded) res.end(); });
+  proc.on('error', () => {
+    const msg = `\n\n⚠️ ${backend} CLI not found. Install it or switch AI backend in settings.`;
+    if (!res.writableEnded) { res.write(msg); res.end(); }
+  });
+});
+
 app.post('/api/classify-ai', (req, res) => {
   const settings = readSettings();
   const backend = settings.aiBackend || 'claude';
@@ -700,6 +1313,7 @@ app.post('/api/classify-ai', (req, res) => {
   if (!unclassified.length) return res.json({ ok: true, classified: 0, msg: 'Nothing to classify' });
 
   const batchSize = 20;
+  const assigned = [];
   let done = 0;
 
   function processBatch(i, callback) {
@@ -710,14 +1324,12 @@ app.post('/api/classify-ai', (req, res) => {
 
     let cmd, args;
     if (backend === 'codex') {
-      cmd = 'codex'; args = ['--full-auto', '-q', prompt];
+      cmd = 'codex'; args = buildAgentArgs('codex', prompt);
     } else {
-      cmd = 'claude'; args = ['-p', prompt];
+      cmd = 'claude'; args = buildAgentArgs('claude', prompt);
     }
 
-    const proc = spawn(cmd, args, {
-      env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
-    });
+    const proc = spawn(cmd, args, { env: agentEnv(EXTRA_PATH) });
 
     let out = '';
     proc.stdout.on('data', d => { out += d.toString(); });
@@ -730,7 +1342,12 @@ app.post('/api/classify-ai', (req, res) => {
             const cat = cats[idx];
             const valid = CATEGORIES.includes(cat) ? cat : 'misc';
             const bm = data.find(d => d.id === b.id);
-            if (bm) { bm.primaryCategory = valid; bm.categories = [valid]; }
+            if (bm) {
+              bm.primaryCategory = valid;
+              bm.categories = [valid];
+              const dbId = xDbId(bm);
+              if (dbId) assigned.push({ id: dbId, category: valid });
+            }
           });
           done += batch.length;
         } catch {}
@@ -742,29 +1359,96 @@ app.post('/api/classify-ai', (req, res) => {
 
   processBatch(0, () => {
     try { writeBookmarks(data); } catch {}
+    // Into SQLite as well: this endpoint is how the backlog gets cleared, and a
+    // label that lives only in bookmarks.json is undone by the next export.
+    saveCategoriesToDb(assigned);
     res.json({ ok: true, classified: done });
   });
 });
 
 // ── Sync & Classify ───────────────────────────────────────────────────────────
-const EXPORT_PY = path.resolve(__dirname, '..', 'export.py');
-const BIRDCLAW_EXPORT_PY = path.resolve(__dirname, '..', 'birdclaw_export.py');
-const BIRDCLAW_DB = path.join(os.homedir(), '.birdclaw', 'birdclaw.sqlite');
+const EXPORT_PY = path.join(SCRIPT_DIR, 'export.py');
+
+// ── What a sync actually brought in ───────────────────────────────────────────
+// Classification used to run over every unclassified row in the collection, and
+// the same rows kept coming back forever. Two reasons, both fixed here:
+//
+//   1. Scope. A sync adds a handful of tweets; the backlog behind them is in the
+//      hundreds. Re-labelling the backlog is an agent call per 20 rows and the
+//      bulk of the wait, for labels those rows already had.
+//   2. Persistence. The AI backends wrote their labels into bookmarks.json only,
+//      and the next sync's `runExport` rebuilds that file from SQLite — where
+//      the row still said `unclassified`. So the backlog could never shrink.
+//
+// Snapshotting ids before the sync and diffing after is what tells new from old:
+// `ft` leaves `synced_at` alone on rows it has seen before, but it also backfills
+// older tweets, so a timestamp watermark would silently skip them.
+function sourceBookmarkIds() {
+  if (!fs.existsSync(DB_PATH)) return null;
+  try {
+    const Database = require('better-sqlite3');
+    const conn = new Database(DB_PATH, { readonly: true });
+    try {
+      return new Set(conn.prepare('SELECT id FROM bookmarks').all().map(r => String(r.id)));
+    } finally { conn.close(); }
+  } catch {
+    // No snapshot means no way to tell new from old. Returning null falls back
+    // to classifying everything unclassified — slow, but it can't skip the rows
+    // the sync just added.
+    return null;
+  }
+}
+
+// Ids present after the sync that weren't there before. `null` in stays `null`
+// out, so callers can tell "nothing new" from "couldn't tell".
+function newlySyncedIds(before) {
+  if (!before) return null;
+  const after = sourceBookmarkIds();
+  if (!after) return null;
+  const added = new Set();
+  for (const id of after) if (!before.has(id)) added.add(id);
+  return added;
+}
+
+function writeIdsFile(ids) {
+  const file = path.join(os.tmpdir(), `tsb-classify-ids-${Date.now()}.txt`);
+  fs.writeFileSync(file, [...ids].join('\n'));
+  return file;
+}
+
+// The bare tweet id Field Theory's SQLite knows a row by, or null when the row
+// isn't X's. Ids reach the merged collection namespaced (`x:123`, `hn:456`);
+// only X's rows live in that DB, and an 8-digit HN id passed through unchecked
+// could in principle match a tweet id.
+function xDbId(bookmark) {
+  const { source, rawId } = store.splitId(bookmark.id);
+  return source === 'x' ? rawId : null;
+}
+
+// Persist AI-assigned categories into Field Theory's SQLite, so the next export
+// carries them instead of overwriting them with `unclassified`.
+function saveCategoriesToDb(assigned) {
+  if (!assigned.length || !fs.existsSync(DB_PATH)) return 0;
+  try {
+    const Database = require('better-sqlite3');
+    const conn = new Database(DB_PATH);
+    try {
+      const stmt = conn.prepare('UPDATE bookmarks SET primary_category = ?, categories = ? WHERE id = ?');
+      let saved = 0;
+      conn.transaction(rows => {
+        for (const r of rows) saved += stmt.run(r.category, r.category, r.id).changes;
+      })(assigned);
+      return saved;
+    } finally { conn.close(); }
+  } catch (e) {
+    logs.classify.push(`Couldn't save categories to the source DB (${e.message}) — they may be re-classified next sync.\n`);
+    return 0;
+  }
+}
 
 function runExport(onDone) {
   // export.py reads SQLite → bookmarks.json, preserving colorLabel/note/isRead/favFolder
-  const proc = spawn('python3', [EXPORT_PY, BOOKMARKS_JSON], {
-    env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
-  });
-  proc.stdout.on('data', d => logs.classify.push(d.toString()));
-  proc.stderr.on('data', d => logs.classify.push(d.toString()));
-  proc.on('close', code => { if (onDone) onDone(code); });
-  proc.on('error', e => { logs.classify.push(`Export error: ${e.message}\n`); if (onDone) onDone(1); });
-}
-
-function runBirdclawExport(kind, onDone) {
-  // birdclaw_export.py reads ~/.birdclaw/birdclaw.sqlite → bookmarks.json
-  const proc = spawn('python3', [BIRDCLAW_EXPORT_PY, BOOKMARKS_JSON, '--kind', kind], {
+  const proc = spawn('python3', [EXPORT_PY, bookmarksPath()], {
     env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
   });
   proc.stdout.on('data', d => logs.classify.push(d.toString()));
@@ -777,7 +1461,7 @@ function runBirdclawExport(kind, onDone) {
 // backend onto classify.py's --backend flag. python → regex (offline/OpenAI key).
 function runJsonClassify(classifyBackend, onDone) {
   const backend = classifyBackend === 'codex' ? 'codex' : classifyBackend === 'claude' ? 'claude' : 'regex';
-  const proc = spawn('python3', [CLASSIFY_PY, `--json=${BOOKMARKS_JSON}`, `--backend=${backend}`], {
+  const proc = spawn('python3', [CLASSIFY_PY, `--json=${bookmarksPath()}`, `--backend=${backend}`], {
     env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
   });
   proc.stdout.on('data', d => logs.classify.push(d.toString()));
@@ -792,14 +1476,7 @@ app.post('/api/syncall', (req, res) => {
   }
 
   const settings = readSettings();
-  const source = settings.syncSource || 'fieldtheory';
   for (const key of ['sync', 'classify']) { logs[key] = []; status[key] = 'idle'; }
-
-  if (source === 'birdclaw') {
-    const err = runBirdclawSync(settings);
-    if (err) return res.json({ ok: false, msg: err });
-    return res.json({ ok: true });
-  }
 
   // ── Field Theory (default) ──
   if (!resolveBin('fieldtheory')) {
@@ -809,99 +1486,90 @@ app.post('/api/syncall', (req, res) => {
   res.json({ ok: true });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// birdclaw adapter (https://birdclaw.sh by @steipete). Pipeline:
-//   1. best-effort `birdclaw sync bookmarks` to pull fresh data into its SQLite DB
-//   2. birdclaw_export.py reads ~/.birdclaw/birdclaw.sqlite → bookmarks.json
-//   3. classify.py --json categorizes the result
-//
-// The sync step (1) needs Node >=25.8.1 and X auth (bird/xurl). If it can't run,
-// we still export whatever is already cached in the DB (steps 2-3), so the app
-// shows your existing birdclaw data instead of failing. Returns an error string
-// for a hard precondition failure, or null once the async pipeline has started.
-// ─────────────────────────────────────────────────────────────────────────────
-function runBirdclawSync(settings) {
-  const bin = resolveBin('birdclaw');
-  const haveDb = fs.existsSync(BIRDCLAW_DB);
-  if (!bin && !haveDb) {
-    return 'birdclaw not installed and no DB at ~/.birdclaw — install from https://birdclaw.sh, then run `birdclaw init`';
-  }
-
-  let exported = false;
-  const exportThenClassify = () => {
-    if (exported) return;          // guard: 'error' + 'close' can both fire
-    exported = true;
-    status.sync = 'done';
-    status.classify = 'running';
-    logs.classify.push('Exporting bookmarks from birdclaw…\n');
-    runBirdclawExport('bookmarks', (code) => {
-      if (code !== 0) { status.classify = 'error'; return; }
-      runJsonClassify(settings.classifyBackend || 'python', () => { status.classify = 'done'; });
-    });
-  };
-
-  status.sync = 'running';
-  if (bin) {
-    // best-effort live sync; proceed to export regardless of outcome
-    const started = runProc('sync', bin, ['sync', 'bookmarks', '--mode', 'auto'], () => exportThenClassify());
-    if (!started) { status.sync = 'idle'; return 'A sync is already running'; }
-    procs.sync.on('error', () => {
-      logs.sync.push('birdclaw sync could not start (needs Node 25 + X auth) — exporting cached data\n');
-      exportThenClassify();
-    });
-  } else {
-    logs.sync.push('birdclaw CLI not found — exporting cached DB\n');
-    exportThenClassify();
-  }
-  return null;
-}
-
 function runFieldTheorySync(settings) {
   const FT_BIN = resolveBin('fieldtheory') || FT;
-  runProc('sync', FT_BIN, ['sync', '--browser', 'chrome', '--yes'], () => {
+  const browser = settings.syncBrowser || 'chrome';
+  const before = sourceBookmarkIds();
+  runProc('sync', FT_BIN, ['sync', '--browser', browser, '--yes'], (code) => {
+    // A failed sync leaves the previous export in place. Classifying it again
+    // burns an agent run per batch to relabel bookmarks that already carry the
+    // same labels, and ends with status `done` — which read, to anyone watching
+    // the panel, as though the sync had worked.
+    if (code !== 0) return;
+
     const classifyBackend = settings.classifyBackend || 'python';
     status.classify = 'running';
 
+    // Only what this sync pulled in gets classified. null means the snapshot
+    // failed and we can't tell — then everything unclassified is fair game.
+    const newIds = newlySyncedIds(before);
+
+    // Nothing new: still export, because counts, folders and article text move
+    // on rows we already had, but don't spend a classifier run on old labels.
+    if (newIds && newIds.size === 0) {
+      logs.classify.push('No new bookmarks — nothing to classify.\n');
+      runExport(() => { status.classify = 'done'; });
+      return;
+    }
+
     if (classifyBackend === 'python') {
       // 1. classify in SQLite via classify.py, 2. export to bookmarks.json
-      runProc('classify', 'python3', [CLASSIFY_PY], () => {
+      const idsFile = newIds ? writeIdsFile(newIds) : null;
+      const args = idsFile ? [CLASSIFY_PY, `--ids-file=${idsFile}`] : [CLASSIFY_PY];
+      runProc('classify', 'python3', args, () => {
+        if (idsFile) { try { fs.unlinkSync(idsFile); } catch {} }
         runExport(() => { status.classify = 'done'; });
       });
     } else {
       // 1. export first so we have JSON to classify
       // 2. classify with AI CLI, 3. write categories back
       const aiCmd = classifyBackend === 'codex' ? 'codex' : 'claude';
+      // Logged here rather than above the backend split: runProc clears
+      // logs.classify when it starts the python classifier, which would take
+      // this line with it.
+      if (newIds) {
+        logs.classify.push(`${newIds.size} new bookmark${newIds.size === 1 ? '' : 's'} from this sync.\n`);
+      }
       logs.classify.push(`Exporting bookmarks…\n`);
 
       runExport(() => {
         let data;
         try { data = readBookmarks(); } catch { status.classify = 'error'; return; }
 
-        const unclassified = data.filter(b =>
-          !b.primaryCategory || b.primaryCategory === '' || b.primaryCategory === 'unclassified'
+        // `newIds` holds bare tweet ids from SQLite, so rows are matched on the
+        // id that DB knows them by. Rows from other sources answer null and
+        // fall out: this panel syncs X, and nothing here fetched them.
+        const pending = data.filter(b =>
+          (!b.primaryCategory || b.primaryCategory === '' || b.primaryCategory === 'unclassified') &&
+          (!newIds || newIds.has(xDbId(b)))
         );
 
-        if (!unclassified.length) { status.classify = 'done'; return; }
+        if (!pending.length) {
+          logs.classify.push('Nothing new to classify.\n');
+          status.classify = 'done';
+          return;
+        }
 
-        logs.classify.push(`Classifying ${unclassified.length} bookmarks with ${aiCmd}…\n`);
+        logs.classify.push(`Classifying ${pending.length} new bookmarks with ${aiCmd}…\n`);
         const batchSize = 20;
+        const assigned = [];
         let done = 0;
 
         function runBatch(i) {
-          if (i >= unclassified.length) {
+          if (i >= pending.length) {
             try { writeBookmarks(data); } catch {}
+            // Back into SQLite as well, or the next sync's export resets them.
+            saveCategoriesToDb(assigned);
             status.classify = 'done';
             logs.classify.push(`Done. ${done} classified.\n`);
             return;
           }
-          const batch = unclassified.slice(i, i + batchSize);
+          const batch = pending.slice(i, i + batchSize);
           const lines = batch.map((b, idx) => `${idx + 1}. ${(b.text || '').slice(0, 300)}`).join('\n');
           const prompt = `Classify tweets into one of: ${CATEGORIES.join(', ')}. Return ONLY a JSON array. No markdown.\n\n${lines}`;
-          const args2 = classifyBackend === 'codex' ? ['--full-auto', '-q', prompt] : ['-p', prompt];
+          const args2 = buildAgentArgs(classifyBackend === 'codex' ? 'codex' : 'claude', prompt);
 
-          const proc = spawn(aiCmd, args2, {
-            env: { ...process.env, PATH: process.env.PATH + ':' + EXTRA_PATH },
-          });
+          const proc = spawn(aiCmd, args2, { env: agentEnv(EXTRA_PATH) });
           let out = '';
           proc.stdout.on('data', d => { out += d.toString(); });
           proc.on('close', code => {
@@ -913,12 +1581,17 @@ function runFieldTheorySync(settings) {
                   const cat = cats[idx];
                   const valid = CATEGORIES.includes(cat) ? cat : 'misc';
                   const bm = data.find(d => d.id === b.id);
-                  if (bm) { bm.primaryCategory = valid; bm.categories = [valid]; }
+                  if (bm) {
+                    bm.primaryCategory = valid;
+                    bm.categories = [valid];
+                    const dbId = xDbId(bm);
+                    if (dbId) assigned.push({ id: dbId, category: valid });
+                  }
                 });
                 done += batch.length;
               } catch {}
             }
-            logs.classify.push(`Categories: ${Math.min(i + batchSize, unclassified.length)}/${unclassified.length}\n`);
+            logs.classify.push(`Categories: ${Math.min(i + batchSize, pending.length)}/${pending.length}\n`);
             runBatch(i + batchSize);
           });
           proc.on('error', () => { status.classify = 'error'; });
@@ -929,24 +1602,56 @@ function runFieldTheorySync(settings) {
   });
 }
 
+// `ft` fails with a diagnosis attached — "Your X session may have expired …" —
+// and the UI used to replace all of it with "Something went wrong". Pull the
+// Error/Fix pair back out so the panel can say which thing broke.
+//
+// Reads the whole log rather than the tail shown to the user: the spinner emits
+// a chunk per frame, so the error can be many chunks back by the time it lands.
+function syncFailure() {
+  const clean = logs.sync.join('')
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')   // ANSI colour + erase-line
+    .replace(/\r/g, '\n');                     // spinner rewrites the line
+  const grab = (label) => {
+    const line = clean.split('\n').map(l => l.trim()).find(l => l.startsWith(label));
+    return line ? line.slice(label.length).trim() : null;
+  };
+  return { error: grab('Error:'), fix: grab('Fix:') };
+}
+
 app.get('/api/status', (req, res) => {
   const classifyLog = logs.classify.join('');
   const m = classifyLog.match(/Categories:\s+\d+\/\d+/g);
+  const failure = status.sync === 'error' ? syncFailure() : { error: null, fix: null };
   res.json({
-    sync:     { status: status.sync,     log: logs.sync.slice(-5).join('') },
+    sync:     { status: status.sync,     log: logs.sync.slice(-5).join(''), ...failure },
     classify: { status: status.classify, log: logs.classify.slice(-3).join(''), progress: m ? m[m.length - 1] : null },
   });
 });
 
+// The page carries the API token, so it gets the same Host check as the API:
+// a DNS-rebinding page could otherwise load it same-origin and read the token
+// out. Cross-site pages can request it but never read it — there is no CORS
+// header for them.
 if (fs.existsSync(DIST)) {
+  const indexHtml = fs.readFileSync(path.join(DIST, 'index.html'), 'utf8').replace(
+    '</head>',
+    `<script>window.__TSB_API_TOKEN__=${JSON.stringify(AUTH_TOKEN)};</script></head>`,
+  );
   app.get('*', (req, res) => {
-    res.sendFile(path.join(DIST, 'index.html'));
+    if (!hostAllowed(req)) return res.status(403).send('forbidden');
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(indexHtml);
   });
 }
 
-app.listen(PORT, () => {
+// Loopback only. The default (all interfaces) put every bookmark on the local
+// network — verified reachable from another device on the same Wi-Fi — and
+// exposed /api/chat, which spawns a coding agent, to anyone who could reach it.
+app.listen(PORT, '127.0.0.1', () => {
   openStateDb();   // create + migrate the state DB on boot
-  console.log(`\n  Bookmark server → http://localhost:${PORT}`);
-  console.log(`  Data:  ${BOOKMARKS_JSON}`);
+  console.log(`\n  Bookmark server → http://127.0.0.1:${PORT} (loopback only)`);
+  console.log(`  Data:  ${bookmarksPath()}`);
   console.log(`  State: ${STATE_DB_PATH}\n`);
+  // The token is deliberately absent from this log; it is the credential.
 });

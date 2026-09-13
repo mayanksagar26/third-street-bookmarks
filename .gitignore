@@ -17,3 +17,10 @@ client/dist/
 # OS
 .DS_Store
 .gstack/
+
+# If TSB_DATA_DIR points at the repo: the API credential, per-source
+# collections, uploaded exports and the state DB must never be committable.
+auth-token
+sources/
+imports/
+state.db

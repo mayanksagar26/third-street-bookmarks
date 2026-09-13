@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import FavFolderPicker from './FavFolderPicker';
+import { getBookmarkSource, SourceIcon } from '../bookmark-sources';
 
 const CAT_CLASS = {
   technology:'cat-technology', tech:'cat-technology',
@@ -15,6 +17,25 @@ function getCatClass(cat) {
   return CAT_CLASS[cat.toLowerCase().replace(/[^a-z ]/g, '').trim()] || 'cat-other';
 }
 
+/**
+ * The counters a card can draw, keyed by the icon a source asks for.
+ *
+ * Which of these appear is declared per source in `bookmark-sources`, not
+ * decided here: X reports four, Hacker News two under different names, and the
+ * export-based sources report none at all. Rendering a fixed four meant every
+ * Instagram row read "0 0 0 0" — which looks like a post nobody ever touched
+ * rather than like data the export simply does not contain.
+ */
+const METRIC_ICONS = {
+  reply: <path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 7.879 3.77 7.879 8.004 0 3.783-2.96 7.292-6.893 7.92a.5.5 0 01-.579-.49v-1.79c0-.145-.049-.274-.13-.373-.12-.146-.322-.197-.51-.146a8 8 0 01-2.147.298c-4.421 0-7.991-3.58-7.991-8.003z"/>,
+  repost: <path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/>,
+  like: <path d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/>,
+  bookmark: <path d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/>,
+  // Hacker News votes are a caret, the way the site draws them itself.
+  points: <path d="M12 4l8 10h-5v6H9v-6H4l8-10z"/>,
+  comment: <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>,
+};
+
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 function fmt(n) { return Number(n || 0).toLocaleString(); }
 
@@ -26,6 +47,35 @@ function readingTime(text) {
 
 function isOnlyLink(text) {
   return /^https?:\/\/\S+$/.test((text || '').trim());
+}
+
+/**
+ * Where "View" should go.
+ *
+ * Older exports don't always carry a `url`, and falling back to `#` made the
+ * button silently dead. Handle plus tweet id is enough to rebuild the
+ * canonical link, so only a bookmark missing both ends up with nothing.
+ */
+function tweetUrl(b) {
+  if (b.url) return b.url;
+  // Ids are namespaced now (`x:1789…`), so the raw one has to come from
+  // `rawId`/`tweetId` — pasting the namespaced id into a status URL 404s.
+  const id = b.tweetId || b.rawId;
+  if (b.authorHandle && id) return `https://x.com/${b.authorHandle}/status/${id}`;
+  return null;
+}
+
+/**
+ * Where the author's name should link.
+ *
+ * Only X has a profile page we can rebuild from a handle. A Hacker News
+ * username or a YouTube channel title is not an x.com URL, and sending it there
+ * was the bug that made every non-X card's byline lie about where it went.
+ */
+function authorUrl(b) {
+  if (b.source === 'x' || !b.source) return b.authorHandle ? `https://x.com/${b.authorHandle}` : null;
+  if (b.source === 'hn') return b.authorHandle ? `https://news.ycombinator.com/user?id=${b.authorHandle}` : null;
+  return null;
 }
 
 function esc(s) {
@@ -75,70 +125,73 @@ export default function TweetCard({
   bookmark: b, searchQuery, isRead, folders = [], allFolders = [],
   note, isFocused,
   onToggleRead, onSetFavFolders, onRenameFavFolder, onUpdateNote, onSpeakBookmark,
+  onExplain,
 }) {
-  const [showFavPopup, setShowFavPopup]     = useState(false);
   const [showNotePopup, setShowNotePopup]   = useState(false);
-  const [newFolder, setNewFolder]           = useState('');
-  const [renaming, setRenaming]             = useState(null);   // folder being renamed
-  const [renameText, setRenameText]         = useState('');
   const [noteText, setNoteText]             = useState(note || '');
-  const favPopupRef   = useRef(null);
+  const [expanded, setExpanded]             = useState(false);
+  const [overflows, setOverflows]           = useState(false);
+  const textRef = useRef(null);
   const notePopupRef  = useRef(null);
-  const favInputRef   = useRef(null);
+  const noteWrapRef   = useRef(null);
   const noteInputRef  = useRef(null);
 
   const isFav = folders.length > 0;
-  // Union of this bookmark's folders and all existing folders, for the picker.
-  const pickerFolders = [...new Set([...allFolders, ...folders])].sort();
 
   useEffect(() => { setNoteText(note || ''); }, [note]);
 
-  useEffect(() => {
-    if (!showFavPopup) return;
-    setTimeout(() => favInputRef.current?.focus(), 50);
-    const close = (e) => { if (!favPopupRef.current?.contains(e.target)) setShowFavPopup(false); };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [showFavPopup]);
+  /**
+   * Does this card's text actually overflow?
+   *
+   * Measured rather than guessed from a character count, because the same 600
+   * characters is four lines of a YouTube description and eleven of a tweet
+   * full of line breaks. A count would put "View more" on cards that show
+   * everything already, and withhold it from ones that don't.
+   *
+   * Only measured while clamped — expanded, scrollHeight equals clientHeight
+   * and the answer would always be "no".
+   */
+  useLayoutEffect(() => {
+    if (expanded) return;
+    const el = textRef.current;
+    if (!el) { setOverflows(false); return; }
+    setOverflows(el.scrollHeight - el.clientHeight > 4);
+  }, [b.text, searchQuery, expanded]);
+
+  // A different bookmark in the same slot starts collapsed again.
+  useEffect(() => { setExpanded(false); }, [b.id]);
 
   useEffect(() => {
     if (!showNotePopup) return;
-    setTimeout(() => noteInputRef.current?.focus(), 50);
-    const close = (e) => { if (!notePopupRef.current?.contains(e.target)) setShowNotePopup(false); };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
+    noteInputRef.current?.focus();
+    // "Outside" means outside the wrapper, not outside the popup — the pencil
+    // is a sibling of the popup, and `mousedown` on it fires before its own
+    // click. Excluding only the popup meant pressing the pencil closed the
+    // panel on mousedown and the click then reopened it, or didn't, depending
+    // on how React batched the two.
+    const close = (e) => {
+      if (!noteWrapRef.current?.contains(e.target)) setShowNotePopup(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
   }, [showNotePopup]);
 
   const handle = b.authorHandle || '';
   const name = b.authorName || handle;
+  const src = getBookmarkSource(b.source || 'x');
+  const isX = (b.source || 'x') === 'x';
+  const profileUrl = authorUrl(b);
+  // A tweet's text is the content. Everywhere else the title is, and the text
+  // is a description underneath it.
+  // A Takeout import arrives with ids and no titles until enrichment catches
+  // up, and a deleted video never gets one. The link is a worse heading than a
+  // title but a much better one than an empty card.
+  const heading = !isX ? (b.title || (!b.text ? b.url : null)) : null;
+  const showTitle = Boolean(heading) && heading !== b.text && heading !== name;
   const cats = b.categories?.length ? b.categories : (b.primaryCategory && b.primaryCategory !== 'unclassified' ? [b.primaryCategory] : []);
   const addedDate = formatAdded(b.bookmarkedAt || b.syncedAt);
   const qt = b.quotedTweet;
   const hasQuote = qt && qt.text && !isOnlyLink(qt.text);
-
-  function handleStarClick(e) {
-    e.stopPropagation();
-    setShowFavPopup(p => !p);   // open the multi-folder picker (no instant remove)
-  }
-
-  function toggleFolder(folder) {
-    const next = folders.includes(folder) ? folders.filter(f => f !== folder) : [...folders, folder];
-    onSetFavFolders(b.id, next);   // keeps popup open for multi-select
-  }
-
-  function addNewFolder() {
-    const name = newFolder.trim();
-    if (!name) return;
-    if (!folders.includes(name)) onSetFavFolders(b.id, [...folders, name]);
-    setNewFolder('');
-  }
-
-  function commitRename() {
-    const to = renameText.trim();
-    if (renaming && to && to !== renaming) onRenameFavFolder(renaming, to);
-    setRenaming(null);
-    setRenameText('');
-  }
 
   function handleNoteClick(e) {
     e.stopPropagation();
@@ -157,77 +210,152 @@ export default function TweetCard({
     >
       <a
         className="tweet-avatar"
-        href={`https://x.com/${handle}`}
+        href={profileUrl || tweetUrl(b) || '#'}
         target="_blank"
         rel="noopener noreferrer"
         onClick={e => e.stopPropagation()}
       >
         {b.authorProfileImageUrl
           ? <img src={b.authorProfileImageUrl} alt="" loading="lazy" onError={e => e.target.style.display='none'} />
-          : <div className="tweet-avatar-placeholder">{(name[0] || '?').toUpperCase()}</div>
+          : isX
+            ? <div className="tweet-avatar-placeholder">{(name[0] || '?').toUpperCase()}</div>
+            : (
+              // Only X ships avatars. A letter tile for every HN and YouTube
+              // row reads as a broken image; the source mark says something true.
+              <div className="tweet-avatar-placeholder src" style={{ color: src.accent }}>
+                <SourceIcon source={b.source} size={18} />
+              </div>
+            )
         }
       </a>
 
       <div className="tweet-body">
         <div className="tweet-header">
-          <a className="tweet-name" href={`https://x.com/${handle}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>
-            {name}
-          </a>
-          <a className="tweet-handle" href={`https://x.com/${handle}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>
-            @{handle}
-          </a>
+          {profileUrl ? (
+            <a className="tweet-name" href={profileUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>
+              {name}
+            </a>
+          ) : (
+            <span className="tweet-name">{name || src.label}</span>
+          )}
+          {/* Prefer the handle over the domain when we have one: "@sou.tospeak"
+              says who posted it, where "instagram.com" only repeats the badge
+              two inches to its right. Falls back to the domain for sources that
+              have no such thing, like a saved link. */}
+          {handle && (isX
+            ? <a className="tweet-handle" href={profileUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>@{handle}</a>
+            : <span className="tweet-handle">{handle !== name ? `@${handle}` : (b.domain || src.label)}</span>
+          )}
+          {!isX && (
+            <span className="src-badge" style={{ color: src.accent, borderColor: `${src.accent}44` }} title={`Saved from ${src.label}`}>
+              <SourceIcon source={b.source} size={11} />
+              {src.short || src.label}
+            </span>
+          )}
           <span className="tweet-date">{formatDate(b.postedAt)}</span>
 
           <div className="tweet-card-actions">
+            {/* Ask the AI about this one. First in the row because it is the
+                action you take *before* deciding whether to read, favourite or
+                keep the thing — the others all assume you already know what it
+                is. */}
+            {onExplain && (
+              <button
+                type="button"
+                className="tw-btn ai-btn"
+                title="Explain this with AI"
+                aria-label="Explain this with AI"
+                onClick={e => { e.stopPropagation(); onExplain(b); }}
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2.5l1.65 4.6a4 4 0 0 0 2.4 2.4l4.6 1.65-4.6 1.65a4 4 0 0 0-2.4 2.4L12 19.8l-1.65-4.6a4 4 0 0 0-2.4-2.4L3.35 11.15l4.6-1.65a4 4 0 0 0 2.4-2.4L12 2.5z"/>
+                  <path d="M18.6 2.2l.62 1.73c.13.36.4.63.76.76l1.72.61-1.72.62a1.5 1.5 0 0 0-.76.75l-.62 1.73-.61-1.73a1.5 1.5 0 0 0-.76-.75l-1.73-.62 1.73-.61c.36-.13.63-.4.76-.76l.61-1.73z"/>
+                  <path d="M5.1 16.1l.5 1.4c.1.29.32.51.6.61l1.4.5-1.4.5c-.28.1-.5.32-.6.6l-.5 1.4-.5-1.4a1.2 1.2 0 0 0-.6-.6l-1.4-.5 1.4-.5c.28-.1.5-.32.6-.61l.5-1.4z"/>
+                </svg>
+              </button>
+            )}
+
             {/* Speak button */}
             {onSpeakBookmark && (
               <button
+                type="button"
                 className="tw-btn speak-btn"
                 title="Listen to this bookmark"
+                aria-label="Listen to this bookmark"
                 onClick={e => { e.stopPropagation(); onSpeakBookmark(b); }}
               >
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
               </button>
             )}
 
-            {/* Note button */}
-            <button
-              className={`tw-btn note-btn${note ? ' active' : ''}`}
-              title={note ? 'Edit note' : 'Add note'}
-              onClick={handleNoteClick}
-              style={{ position: 'relative' }}
-            >
-              <svg viewBox="0 0 24 24" fill={note ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={note ? '0' : '1.8'}>
-                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-              </svg>
+            {/* Note.
+
+                The popup is a sibling of the button, not a child of it.
+                Nesting a textarea inside a <button> is invalid HTML, and the
+                browser enforces that the way browsers do: Space is button
+                activation, so every space you typed fired a click and closed
+                the note you were writing. */}
+            <span className="note-wrap" ref={noteWrapRef}>
+              <button
+                type="button"
+                className={`tw-btn note-btn${note ? ' active' : ''}${showNotePopup ? ' open' : ''}`}
+                title={note ? 'Edit note' : 'Add note'}
+                aria-label={note ? 'Edit note' : 'Add note'}
+                aria-expanded={showNotePopup}
+                onClick={handleNoteClick}
+              >
+                <svg viewBox="0 0 24 24" fill={note ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={note ? '0' : '1.8'}>
+                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                </svg>
+              </button>
+
               {showNotePopup && (
                 <div className="note-popup" ref={notePopupRef} onClick={e => e.stopPropagation()}>
-                  <div className="note-popup-title">Note</div>
+                  <div className="note-popup-head">
+                    <span className="note-popup-title">{note ? 'Edit note' : 'Add note'}</span>
+                    <span className="note-popup-for">{name}</span>
+                  </div>
                   <textarea
                     ref={noteInputRef}
                     className="note-popup-textarea"
-                    placeholder="Add a note…"
+                    placeholder="Why you kept this…"
                     value={noteText}
                     onChange={e => setNoteText(e.target.value)}
-                    rows={3}
-                    onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveNote(); }}
+                    rows={4}
+                    onKeyDown={e => {
+                      // Stop the feed's j/k/r/f shortcuts hearing this at all.
+                      e.stopPropagation();
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveNote(); }
+                      if (e.key === 'Escape') { e.preventDefault(); setNoteText(note || ''); setShowNotePopup(false); }
+                    }}
                   />
                   <div className="note-popup-actions">
                     {note && (
-                      <button className="note-popup-delete" onClick={() => { setNoteText(''); setShowNotePopup(false); onUpdateNote(b.id, null); }}>
-                        Delete
-                      </button>
+                      <button
+                        type="button"
+                        className="note-popup-delete"
+                        onClick={() => { setNoteText(''); setShowNotePopup(false); onUpdateNote(b.id, null); }}
+                      >Delete</button>
                     )}
-                    <button className="note-popup-save" onClick={saveNote}>Save</button>
+                    <span className="note-popup-hint"><kbd>⌘</kbd><kbd>↵</kbd> save · <kbd>esc</kbd> cancel</span>
+                    <button
+                      type="button"
+                      className="note-popup-save"
+                      onClick={saveNote}
+                      disabled={noteText.trim() === (note || '').trim()}
+                    >Save</button>
                   </div>
                 </div>
               )}
-            </button>
+            </span>
 
             {/* Read button */}
             <button
+              type="button"
               className={`tw-btn read-btn${isRead ? ' active' : ''}`}
               title={isRead ? 'Mark as unread' : 'Mark as read'}
+              aria-label={isRead ? 'Mark as unread' : 'Mark as read'}
+              aria-pressed={isRead}
               onClick={e => { e.stopPropagation(); onToggleRead(b.id); }}
             >
               {isRead
@@ -236,80 +364,61 @@ export default function TweetCard({
               }
             </button>
 
-            {/* Star button + multi-folder picker (popup is a sibling, NOT a child
-                of the button — nesting it inside made Space activate the button
-                and close the popup mid-type). */}
-            <span className="star-wrap">
-              <button
-                className={`tw-btn star-btn${isFav ? ' active' : ''}`}
-                title={isFav ? `In: ${folders.join(', ')}` : 'Add to favourites'}
-                onClick={handleStarClick}
-              >
-                {isFav
-                  ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                  : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                }
-              </button>
-              {showFavPopup && (
-                <div className="fav-popup" ref={favPopupRef} onClick={e => e.stopPropagation()}>
-                  <div className="fav-popup-title">Save in folders</div>
-                  {pickerFolders.map(f => (
-                    <div key={f} className="fav-popup-folder">
-                      {renaming === f ? (
-                        <input
-                          className="fav-rename-input"
-                          autoFocus
-                          value={renameText}
-                          onChange={e => setRenameText(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') commitRename();
-                            else if (e.key === 'Escape') { setRenaming(null); setRenameText(''); }
-                          }}
-                          onBlur={commitRename}
-                        />
-                      ) : (
-                        <>
-                          <label className="fav-folder-check" onClick={e => { e.preventDefault(); toggleFolder(f); }}>
-                            <input type="checkbox" checked={folders.includes(f)} readOnly />
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="#f59e0b">
-                              <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
-                            </svg>
-                            <span className="fav-folder-name">{f}</span>
-                          </label>
-                          <button
-                            className="fav-rename-btn"
-                            title="Rename folder"
-                            onClick={() => { setRenaming(f); setRenameText(f); }}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                  {pickerFolders.length > 0 && <div className="fav-popup-divider" />}
-                  <input
-                    ref={favInputRef}
-                    className="fav-popup-input"
-                    placeholder="New folder…"
-                    value={newFolder}
-                    onChange={e => setNewFolder(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addNewFolder(); } }}
-                  />
-                  <div className="fav-popup-actions">
-                    <button className="fav-popup-add" onClick={addNewFolder}>Add</button>
-                    <button className="fav-popup-done" onClick={() => setShowFavPopup(false)}>Done</button>
-                  </div>
-                </div>
-              )}
-            </span>
+            <FavFolderPicker
+              folders={folders}
+              allFolders={allFolders}
+              onSetFolders={next => onSetFavFolders(b.id, next)}
+              onRenameFolder={onRenameFavFolder}
+            />
           </div>
         </div>
 
-        <div
-          className="tweet-text"
-          dangerouslySetInnerHTML={{ __html: getProcessedText(b.text, searchQuery) }}
-        />
+        {showTitle && (
+          <a
+            className="tweet-title"
+            href={tweetUrl(b) || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+          >
+            {heading}
+          </a>
+        )}
+
+        {b.text && (
+          <>
+            <div
+              ref={textRef}
+              className={`tweet-text${expanded ? '' : ' is-clamped'}`}
+              dangerouslySetInnerHTML={{ __html: getProcessedText(b.text, searchQuery) }}
+            />
+            {(overflows || expanded) && (
+              <button
+                type="button"
+                className="tweet-more"
+                onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+              >
+                {expanded ? 'View less' : 'View more'}
+              </button>
+            )}
+          </>
+        )}
+
+        {/* A video or article without its thumbnail is a worse row than a plain
+            link. Instagram deliberately has none: its CDN URLs are signed and
+            expire, so a preview would be broken by the time you read it. */}
+        {b.thumbnailUrl && (
+          <a
+            className={`tweet-thumb ${b.source === 'yt' ? 'is-video' : ''}`}
+            href={tweetUrl(b) || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+          >
+            <img src={b.thumbnailUrl} alt="" loading="lazy" onError={e => { e.target.parentElement.style.display = 'none'; }} />
+            {b.duration && <span className="tweet-thumb-duration">{b.duration}</span>}
+          </a>
+        )}
 
         {/* Quoted tweet */}
         {hasQuote && (
@@ -335,12 +444,12 @@ export default function TweetCard({
 
         {/* Note display */}
         {note && (
-          <div className="tweet-note" onClick={handleNoteClick}>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0, opacity: 0.6 }}>
+          <button type="button" className="tweet-note" onClick={handleNoteClick} aria-label={`Edit note: ${note}`}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0, opacity: 0.6 }} aria-hidden="true">
               <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
             </svg>
             {note}
-          </div>
+          </button>
         )}
 
         {cats.length > 0 && (
@@ -357,31 +466,26 @@ export default function TweetCard({
         </div>
 
         <div className="tweet-actions">
-          <span className="tweet-action">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 7.879 3.77 7.879 8.004 0 3.783-2.96 7.292-6.893 7.92a.5.5 0 01-.579-.49v-1.79c0-.145-.049-.274-.13-.373-.12-.146-.322-.197-.51-.146a8 8 0 01-2.147.298c-4.421 0-7.991-3.58-7.991-8.003z"/></svg>
-            {fmt(b.replyCount)}
-          </span>
-          <span className="tweet-action repost">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>
-            {fmt(b.repostCount)}
-          </span>
-          <span className="tweet-action like">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>
-            {fmt(b.likeCount)}
-          </span>
-          <span className="tweet-action bookmark">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"/></svg>
-            {fmt(b.bookmarkCount)}
-          </span>
-          <a
-            className="view-on-x"
-            href={b.url || '#'}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
-          >
-            View
-          </a>
+          {/* Only what this source actually reports — see METRIC_ICONS. */}
+          {(src.metrics || []).map(m => (
+            <span key={m.field} className={`tweet-action ${m.icon}`} title={m.title || m.icon}>
+              <svg viewBox="0 0 24 24" fill="currentColor">{METRIC_ICONS[m.icon]}</svg>
+              {fmt(b[m.field])}
+            </span>
+          ))}
+          {b.duration && <span className="tweet-action duration">{b.duration}</span>}
+
+          {tweetUrl(b) && (
+            <a
+              className="view-on-x"
+              href={tweetUrl(b)}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+            >
+              View
+            </a>
+          )}
         </div>
       </div>
     </div>

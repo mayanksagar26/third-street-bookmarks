@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { renderMarkdown } from '../markdown';
+import FavFolderPicker from './FavFolderPicker';
 
 const SUGGESTIONS = [
-  "What topics have I been bookmarking most?",
+  "Show me everything I saved about AI agents",
   "Which authors do I bookmark most?",
   "Find AI tools in my bookmarks",
   "Summarise my unread bookmarks",
@@ -17,31 +19,181 @@ function formatDate(s) {
   } catch { return ''; }
 }
 
-function buildContext(bookmarks, query) {
-  const q = query.toLowerCase().replace(/[?!.]/g, '');
-  const terms = q.split(/\s+/).filter(w => w.length > 2 && !['find','show','what','which','have','been','from','about','that','with','this','last','give','tell'].includes(w));
+/** How many bookmarks get sent as context and offered back as cards. */
+const MAX_CONTEXT = 40;
 
-  // Score relevance
-  const scored = bookmarks.map(b => {
-    const text = `${b.text || ''} ${b.authorName || ''} ${b.authorHandle || ''} ${b.primaryCategory || ''} ${(b.categories || []).join(' ')} ${b.note || ''}`.toLowerCase();
-    const score = terms.reduce((s, t) => s + (text.includes(t) ? 1 : 0), 0);
-    return { ...b, _score: score };
-  });
+/**
+ * Words that describe the question or the collection rather than a subject.
+ *
+ * Rarity weighting (below) already buries genuinely common words like "the",
+ * so this list only needs to catch meta-vocabulary that is rare enough to look
+ * topical — "poster", "talking", "saved" and friends. Without it, asking for
+ * "posts where the poster is talking about fonts" ranks by the scaffolding
+ * instead of by "fonts".
+ */
+const STOP_WORDS_RAW = [
+  'a','an','the','and','or','but','if','so','as','of','to','in','on','at','by','for','with',
+  'is','are','was','were','be','been','being','am','do','does','did','doing','done','have',
+  'has','had','having','i','me','my','mine','myself','we','us','our','you','your','yours',
+  'he','him','his','she','her','it','its','they','them','their','theirs','this','that',
+  'these','those','there','here','what','whats','which','who','whom','whose','where','when',
+  'why','how','all','any','both','each','few','more','most','other','some','such','no','nor',
+  'not','only','own','same','than','then','too','very','can','could','will','would','shall',
+  'should','may','might','must','just','now','also','out','off','over','under','up','down',
+  'into','onto','from','about','again','further','once','one','two','first','last','next',
+  'like','get','got','give','want','need','know','look','looking','see','seen','make','made',
+  'use','used','using','say','said','says','tell','telling','list','listing','find','finding',
+  'show','showing','search','searching','please',
+  // Vocabulary about the collection itself, not about what a bookmark is on.
+  'bookmark','bookmarked','bookmarking','tweet','tweeted','post','posted','posting','poster',
+  'thread','save','saved','saving','collection','link','author','account','person','people',
+  'someone','anyone','everyone','everything','anything','something','nothing','thing',
+  'talk','talked','talking','mention','mentioned','mentioning','discuss','discussed',
+  'discussing','write','wrote','written','related','regarding','concerning','around','stuff',
+  'content','item','entry','entries','summarise','summarize','summary',
+];
 
-  const relevant = scored.filter(b => b._score > 0).sort((a, b) => b._score - a._score).slice(0, 15);
-  const sample = relevant.length > 0 ? relevant : bookmarks.slice(0, 10);
-
-  return sample.map(b =>
-    `[${b.authorHandle}] ${b.text?.slice(0, 200) || ''} (${b.primaryCategory || 'uncategorised'}, ${formatDate(b.bookmarkedAt || b.syncedAt)})`
-  ).join('\n');
+/** Light suffix stripping, so a question about "fonts" reaches a tweet about a "font". */
+function stem(w) {
+  if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+  if (w.length > 4 && w.endsWith('sses')) return w.slice(0, -2);
+  if (w.length > 4 && w.endsWith('es') && !w.endsWith('ees')) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') && !w.endsWith('us')) return w.slice(0, -1);
+  if (w.length > 5 && w.endsWith('ing')) return w.slice(0, -3);
+  if (w.length > 4 && w.endsWith('ed') && !w.endsWith('eed')) return w.slice(0, -2);
+  return w;
 }
 
-function buildPrompt(bookmarks, query, systemPrompt) {
+// Stemmed as well, so a stop word still stops once the query token is reduced.
+const STOP_WORDS = new Set([...STOP_WORDS_RAW, ...STOP_WORDS_RAW.map(stem)]);
+
+/** Whole words only — substring matching let "the" hit inside "there" and "other". */
+function tokenize(s) {
+  return ((s || '').toLowerCase().match(/[a-z0-9_]+/g) || []).map(stem);
+}
+
+/**
+ * A searchable view of the whole collection, built once per bookmark set.
+ *
+ * `df` is how many bookmarks each term appears in, which is what lets scoring
+ * tell a topic word from filler without hard-coding either.
+ */
+export function buildIndex(bookmarks) {
+  const docs = bookmarks.map(b => {
+    const text = new Set(tokenize(`${b.text || ''} ${b.note || ''} ${b.articleTitle || ''}`));
+    const author = new Set(tokenize(`${b.authorName || ''} ${b.authorHandle || ''}`));
+    const cat = new Set(tokenize(`${b.primaryCategory || ''} ${(b.categories || []).join(' ')}`));
+    return { b, text, author, cat, all: new Set([...text, ...author, ...cat]) };
+  });
+  const df = new Map();
+  for (const d of docs) for (const t of d.all) df.set(t, (df.get(t) || 0) + 1);
+  return { docs, df, N: docs.length || 1 };
+}
+
+/** Anything scoring far below the best match is noise, however many terms it clipped. */
+const SCORE_FLOOR_RATIO = 0.2;
+
+/**
+ * The bookmarks a question is actually about.
+ *
+ * Terms are weighted by inverse document frequency, so a word held by five
+ * bookmarks outranks one held by two thousand. Every term counting the same is
+ * what used to sink real hits: "fonts" scored no higher than "the", and the
+ * handful of matching tweets landed below rank 79 — well outside the window
+ * that reaches the model.
+ *
+ * Returns the bookmarks rather than a formatted blob, because the same set is
+ * used twice: flattened into the prompt, and rendered back as cards under the
+ * answer. `matched` distinguishes a real hit from a question about the
+ * collection as a whole — showing those as sources would be a lie.
+ */
+export function selectRelevant(index, query) {
+  const { docs, df, N } = index;
+  const candidates = [...new Set(tokenize(query))]
+    .filter(w => w.length > 1 && !STOP_WORDS.has(w))
+    .map(t => ({ t, n: df.get(t) || 0 }));
+
+  // Words no bookmark contains. Reported rather than dropped in silence: asking
+  // about knitting should be told the collection has none, not handed whatever
+  // the query's remaining words happened to hit.
+  const missing = candidates.filter(x => x.n === 0).map(x => x.t);
+  const terms = candidates
+    .filter(x => x.n > 0)
+    .map(x => ({ ...x, idf: Math.log(N / x.n) }));
+
+  // No subject left: an aggregate question ("which authors do I bookmark most?"),
+  // which the collection summary in the prompt answers rather than a search.
+  if (!terms.length) return { items: [], matched: false, terms: [], missing, total: 0 };
+
+  const scored = [];
+  for (const d of docs) {
+    let score = 0;
+    for (const { t, idf } of terms) {
+      // A handle named in the question is a stronger signal than the same word
+      // turning up somewhere in a tweet's body.
+      const boost = d.author.has(t) ? 2.5 : d.cat.has(t) ? 1.5 : d.text.has(t) ? 1 : 0;
+      if (boost) score += idf * boost;
+    }
+    if (score > 0) scored.push({ b: d.b, score });
+  }
+  if (!scored.length) return { items: [], matched: false, terms, missing, total: 0 };
+
+  scored.sort((a, b) => b.score - a.score);
+  const floor = scored[0].score * SCORE_FLOOR_RATIO;
+  const kept = scored.filter(x => x.score >= floor);
+  return {
+    items: kept.slice(0, MAX_CONTEXT).map(x => x.b),
+    matched: true,
+    terms,
+    missing,
+    total: kept.length,
+  };
+}
+
+/** Counts by key, highest first — the shape aggregate questions actually need. */
+function topCounts(bookmarks, pick, limit) {
+  const counts = new Map();
+  for (const b of bookmarks) {
+    const k = pick(b);
+    if (k) counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+
+export function buildPrompt(bookmarks, query, systemPrompt, relevant) {
   const totalCount = bookmarks.length;
   const unread = bookmarks.filter(b => !b.isRead).length;
   const authors = new Set(bookmarks.map(b => b.authorHandle)).size;
-  const cats = [...new Set(bookmarks.map(b => b.primaryCategory).filter(Boolean))].join(', ');
-  const context = buildContext(bookmarks, query);
+
+  // Counts, not just names: "which authors do I bookmark most?" is a question
+  // about the whole collection, and no excerpt of it can answer that.
+  const topAuthors = topCounts(bookmarks, b => b.authorHandle, 20)
+    .map(([h, n]) => `@${h} (${n})`).join(', ');
+  const topCats = topCounts(bookmarks, b => b.primaryCategory, 25)
+    .map(([c, n]) => `${c} (${n})`).join(', ');
+
+  // Numbered, so the answer can point back at specific entries and the UI can
+  // show exactly the ones it used.
+  const context = relevant.items.map((b, i) =>
+    `[${i + 1}] @${b.authorHandle}: ${b.text?.slice(0, 220) || ''} (${b.primaryCategory || 'uncategorised'}, ${formatDate(b.bookmarkedAt || b.syncedAt)})`
+  ).join('\n');
+
+  // Say plainly what the search did, so the model neither invents a shortfall
+  // nor reports the excerpt it was handed as the whole collection.
+  const missing = relevant.missing?.length
+    ? ` No bookmark anywhere in the collection contains: ${relevant.missing.join(', ')} — say so rather than offering near-misses in their place.`
+    : '';
+
+  let searchNote;
+  if (!relevant.terms.length) {
+    searchNote = `No keyword search was run — this reads as a question about the collection as a whole, so answer it from the summary above rather than from individual bookmarks.${missing}`;
+  } else {
+    const words = relevant.terms.map(x => x.t).join(', ');
+    const outcome = relevant.total
+      ? `${relevant.total} matched; the ${relevant.items.length} strongest are listed below, best first.`
+      : `Nothing matched. Say so plainly instead of substituting loosely related bookmarks.`;
+    searchNote = `Searched all ${totalCount} bookmarks for: ${words}. ${outcome}${missing}`;
+  }
 
   return `${systemPrompt ? systemPrompt + '\n\n' : ''}You are an assistant that helps users explore their X/Twitter bookmark collection.
 
@@ -49,27 +201,133 @@ Collection stats:
 - Total bookmarks: ${totalCount}
 - Unread: ${unread}
 - Unique voices: ${authors}
-- Categories: ${cats}
+- Most bookmarked authors: ${topAuthors || 'none'}
+- Categories by size: ${topCats || 'none'}
 
-Relevant bookmarks for this query:
-${context}
+${searchNote}
+${context ? `\nCandidate bookmarks for this query:\n${context}` : ''}
 
 User question: ${query}
 
-Answer concisely and helpfully. Reference specific bookmarks and authors when relevant. Use plain text, no markdown headers.`;
+Answer concisely and helpfully. Reference bookmarks by their number, like [3].
+Only cite a candidate if it genuinely addresses the question — a bookmark that
+merely shares a word with it is not a match.
+Use plain text, no markdown headers.
+On the very last line, list every candidate number that is genuinely relevant to
+the question, in the form: SOURCES: 1, 4, 9
+If none are relevant, write: SOURCES: none`;
 }
 
-function BookmarkCard({ b }) {
+/**
+ * Split the trailing SOURCES line off an answer.
+ *
+ * The line is an instruction to the UI, not something the user should read, so
+ * it never reaches the screen. Matching is anchored to the end and tolerates a
+ * half-written line so nothing flickers mid-stream.
+ */
+function splitSources(raw) {
+  const text = (raw || '').trimEnd();
+  const full = text.match(/\n?\s*SOURCES?\s*:\s*([0-9,\s]*(?:none)?)\s*$/i);
+  if (full) {
+    const numbers = (full[1] || '')
+      .split(',')
+      .map(n => parseInt(n.trim(), 10))
+      .filter(n => Number.isInteger(n) && n > 0);
+    return { text: text.slice(0, full.index).trimEnd(), numbers, complete: true };
+  }
+  // Mid-stream: the label has arrived but the numbers haven't. Hide it early.
+  const partial = text.match(/\n\s*S(?:O(?:U(?:R(?:C(?:E(?:S?)?)?)?)?)?)?\s*:?\s*$/i);
+  if (partial) return { text: text.slice(0, partial.index).trimEnd(), numbers: [], complete: false };
+  return { text, numbers: [], complete: false };
+}
+
+function tweetUrl(b) {
+  if (b.url) return b.url;
+  const id = b.tweetId || b.id;
+  if (b.authorHandle && id) return `https://x.com/${b.authorHandle}/status/${id}`;
+  return null;
+}
+
+const TRUNCATE_AT = 280;
+
+/** A bookmark rendered the way it looks in the feed, sized for a chat answer. */
+function ChatTweet({ b, folders, allFolders, onSetFolders, onRenameFolder }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = b.text || '';
+  const long = text.length > TRUNCATE_AT;
+  const url = tweetUrl(b);
+  const name = b.authorName || b.authorHandle || 'Unknown';
+
   return (
-    <a href={b.url} target="_blank" rel="noopener noreferrer" className="chat-bookmark-card">
-      <div className="chat-bookmark-author">@{b.authorHandle}</div>
-      <div className="chat-bookmark-text">{(b.text || '').slice(0, 160)}{b.text?.length > 160 ? '…' : ''}</div>
-      <div className="chat-bookmark-meta">
-        {b.primaryCategory && <span className="chat-bookmark-cat">{b.primaryCategory}</span>}
-        <span>{formatDate(b.bookmarkedAt || b.syncedAt)}</span>
-        {b.likeCount > 0 && <span>♥ {fmt(b.likeCount)}</span>}
+    <div className="chat-tweet">
+      <div className="chat-tweet-avatar">
+        {b.authorProfileImageUrl
+          ? <img src={b.authorProfileImageUrl} alt="" loading="lazy" onError={e => { e.target.style.display = 'none'; }} />
+          : (name[0] || '?').toUpperCase()}
       </div>
-    </a>
+      <div className="chat-tweet-body">
+        <div className="chat-tweet-head">
+          <span className="chat-tweet-name">{name}</span>
+          <span className="chat-tweet-handle">@{b.authorHandle}</span>
+          <span className="chat-tweet-date">{formatDate(b.postedAt || b.bookmarkedAt || b.syncedAt)}</span>
+        </div>
+        <div className="chat-tweet-text">
+          {expanded || !long ? text : `${text.slice(0, TRUNCATE_AT).trimEnd()}…`}
+        </div>
+        {long && (
+          <button className="chat-tweet-more" onClick={() => setExpanded(p => !p)}>
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        )}
+        <div className="chat-tweet-foot">
+          {b.primaryCategory && b.primaryCategory !== 'unclassified' && (
+            <span className="chat-tweet-cat">{b.primaryCategory}</span>
+          )}
+          {b.likeCount > 0 && <span className="chat-tweet-stat">♥ {fmt(b.likeCount)}</span>}
+          {b.bookmarkCount > 0 && <span className="chat-tweet-stat">🔖 {fmt(b.bookmarkCount)}</span>}
+          {url && (
+            <a className="chat-tweet-view" href={url} target="_blank" rel="noopener noreferrer">View</a>
+          )}
+          {onSetFolders && (
+            <span className="chat-tweet-fav">
+              <FavFolderPicker
+                folders={folders}
+                allFolders={allFolders}
+                onSetFolders={onSetFolders}
+                onRenameFolder={onRenameFolder}
+                buttonClassName="chat-tweet-star"
+              />
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The scrollable stack of bookmarks an answer drew on. */
+function ChatResults({ items, favMap, favFolders, onSetFavFolders, onRenameFavFolder }) {
+  if (!items?.length) return null;
+  return (
+    <div className="chat-results">
+      <div className="chat-results-head">
+        <span className="chat-results-count">{items.length}</span>
+        <span>{items.length === 1 ? 'bookmark' : 'bookmarks'} from your collection</span>
+        {items.length > 3 && <span className="chat-results-hint">scroll for more</span>}
+      </div>
+      <div className="chat-results-scroll">
+        {items.map(b => (
+          <ChatTweet
+            key={b.id}
+            b={b}
+            folders={favMap?.[b.id] || []}
+            allFolders={favFolders}
+            onSetFolders={onSetFavFolders ? next => onSetFavFolders(b.id, next) : undefined}
+            onRenameFolder={onRenameFavFolder}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -79,7 +337,15 @@ function loadSystemPrompt() {
   try { return localStorage.getItem('chatSystemPrompt') || DEFAULT_SYSTEM; } catch { return DEFAULT_SYSTEM; }
 }
 
-export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend, onClose }) {
+export default function ChatWithBookmarks({
+  bookmarks, aiBackend: initialBackend, onClose,
+  favMap, favFolders, onSetFavFolders, onRenameFavFolder,
+  explainTarget, onExplainConsumed,
+}) {
+  // Built once per collection, not per question: indexing a few thousand
+  // bookmarks costs tens of milliseconds, searching one costs under three.
+  const index = useMemo(() => buildIndex(bookmarks), [bookmarks]);
+
   const [aiBackend, setAiBackendLocal]  = useState(initialBackend || 'claude');
   const [showSysPrompt, setShowSysPrompt] = useState(false);
   const [systemPrompt, setSystemPrompt]   = useState(loadSystemPrompt);
@@ -104,6 +370,9 @@ export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const abortRef = useRef(null);
+  // What the in-flight question matched, so a stopped answer still keeps its
+  // bookmarks.
+  const relevantRef = useRef({ items: [], matched: false, terms: [], missing: [], total: 0 });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -117,7 +386,9 @@ export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend
     setLoading(true);
     setStreaming('');
 
-    const prompt = buildPrompt(bookmarks, query, systemPrompt);
+    const relevant = selectRelevant(index, query);
+    relevantRef.current = relevant;
+    const prompt = buildPrompt(bookmarks, query, systemPrompt, relevant);
 
     try {
       const ctrl = new AbortController();
@@ -144,8 +415,19 @@ export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend
         setStreaming(full);
       }
 
-      const finalText = full.trim() || 'No response from AI. Make sure the CLI is installed and authenticated.';
-      setMessages(prev => [...prev, { role: 'assistant', type: 'text', text: finalText }]);
+      const { text: answer, numbers } = splitSources(full);
+      const finalText = answer.trim() || 'No response from AI. Make sure the CLI is installed and authenticated.';
+
+      // Cited entries when the model picked some; otherwise the matches it was
+      // given, so a question about a set of tweets still comes back with them.
+      const cited = numbers
+        .map(n => relevant.items[n - 1])
+        .filter(Boolean);
+      const sources = cited.length
+        ? [...new Map(cited.map(b => [b.id, b])).values()]
+        : (relevant.matched ? relevant.items : []);
+
+      setMessages(prev => [...prev, { role: 'assistant', type: 'text', text: finalText, sources }]);
       setStreaming('');
     } catch (e) {
       if (e.name !== 'AbortError') {
@@ -161,10 +443,86 @@ export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend
     }
   }
 
+  /**
+   * The AI button on a card lands here.
+   *
+   * Deliberately not routed through `sendQuery`. That path searches the whole
+   * collection for what you might have meant; here the subject is already known
+   * exactly, so guessing at it would only add noise. The server builds the
+   * prompt — the fencing has to wrap content the client cannot choose — and
+   * this request is the one allowed to search the web.
+   */
+  async function runExplain(bm) {
+    if (loading) return;
+    const label = bm.title || (bm.text || '').slice(0, 90) || bm.url || 'this bookmark';
+    setMessages(prev => [...prev, { role: 'user', text: `Explain: ${label}` }]);
+    setLoading(true);
+    setStreaming('');
+    relevantRef.current = { items: [bm], matched: true, terms: [], missing: [], total: 1 };
+
+    try {
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const resp = await fetch('/api/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: bm.id }),
+        signal: ctrl.signal,
+      });
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        throw new Error(d.error || `Server error ${resp.status}`);
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        full += decoder.decode(value, { stream: true });
+        setStreaming(full);
+      }
+      const { text } = splitSources(full);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        type: 'text',
+        text: text.trim() || 'No response from AI. Make sure the CLI is installed and authenticated.',
+        // The bookmark itself is the source, always — you asked about this one.
+        sources: [bm],
+      }]);
+      setStreaming('');
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        setMessages(prev => [...prev, {
+          role: 'assistant', type: 'text',
+          text: `Error: ${e.message}. Make sure ${aiBackend === 'codex' ? 'Codex' : 'Claude Code'} CLI is installed and authenticated.`,
+        }]);
+        setStreaming('');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // `at` changes on every press, so asking twice about the same card asks twice.
+  useEffect(() => {
+    if (!explainTarget?.bookmark) return;
+    runExplain(explainTarget.bookmark);
+    onExplainConsumed?.();
+  }, [explainTarget?.at]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleStop() {
     abortRef.current?.abort();
     if (streaming) {
-      setMessages(prev => [...prev, { role: 'assistant', type: 'text', text: streaming }]);
+      const { text, numbers } = splitSources(streaming);
+      const relevant = relevantRef.current;
+      const cited = numbers.map(n => relevant.items[n - 1]).filter(Boolean);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        type: 'text',
+        text,
+        sources: cited.length ? cited : (relevant.matched ? relevant.items : []),
+      }]);
       setStreaming('');
     }
     setLoading(false);
@@ -262,7 +620,17 @@ export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
                     </div>
                     <div className="chat-assistant-body">
-                      <p className="chat-assistant-text" style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</p>
+                      <div
+                        className="chat-assistant-text md"
+                        dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }}
+                      />
+                      <ChatResults
+                        items={msg.sources}
+                        favMap={favMap}
+                        favFolders={favFolders}
+                        onSetFavFolders={onSetFavFolders}
+                        onRenameFavFolder={onRenameFavFolder}
+                      />
                     </div>
                   </div>
                 )}
@@ -277,7 +645,13 @@ export default function ChatWithBookmarks({ bookmarks, aiBackend: initialBackend
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
                   </div>
                   <div className="chat-assistant-body">
-                    <p className="chat-assistant-text" style={{ whiteSpace: 'pre-wrap' }}>{streaming}<span className="chat-cursor" /></p>
+                    {/* Rendered while streaming too, so the answer doesn't
+                        visibly reflow from raw asterisks into formatting at the
+                        moment it finishes. */}
+                    <div className="chat-assistant-text md">
+                      <span dangerouslySetInnerHTML={{ __html: renderMarkdown(splitSources(streaming).text) }} />
+                      <span className="chat-cursor" />
+                    </div>
                   </div>
                 </div>
               </div>
