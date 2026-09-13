@@ -10,6 +10,8 @@ already have installed: no API key, no upload, no account.
 > is the same app in a Tauri shell. Both builds share `~/.tsb`, so they open the
 > same collection with the same read and favourite history.
 
+![The feed](docs/screenshots/02-feed.png)
+
 ---
 
 ## What it does
@@ -27,6 +29,33 @@ already have installed: no API key, no upload, no account.
 - **Voice** — browser TTS (free), ElevenLabs or Sarvam AI
 - **Notes, labels, read/unread** — kept in an app-owned SQLite, so no sync ever resets them
 - **Settings** — AI backend, classify engine, bookmarks location, and a reading font (system, Inter, serif, hand-drawn, mono — all bundled, no network)
+
+---
+
+## What it looks like
+
+**Onboarding** — four steps, skippable:
+
+![Onboarding](docs/screenshots/01-onboarding.png)
+
+**Tools** — adding, browsing and the AI features live in one menu:
+
+![Tools menu](docs/screenshots/03-tools.png)
+
+**Chat with your bookmarks** — ask in plain English; the answer cites the
+bookmarks it used, and runs on your local Claude Code or Codex CLI:
+
+![Chat with bookmarks](docs/screenshots/04-chat.png)
+
+**Stats & Observations** — reading rate, author diversity, categories, saving
+patterns over time:
+
+![Stats and observations](docs/screenshots/05-stats.png)
+
+**Bookmark Podcast** — an audio digest of recent bookmarks, a topic or a
+prompt, in browser TTS, ElevenLabs or Sarvam voices:
+
+![Bookmark podcast](docs/screenshots/06-podcast.png)
 
 ---
 
@@ -96,11 +125,16 @@ the Sync & Classify settings (Chrome, Chromium, Brave, Edge, Comet, Dia, Helium 
 Firefox). Sync then classifies only what it brought in.
 
 **Hacker News** is browsed, not synced. Thirty front-page stories arriving every
-morning would bury the things you chose.
+morning would bury the things you chose, so stories already in your collection
+drop out of the list:
+
+![Browsing Hacker News](docs/screenshots/07-hackernews.png)
 
 **YouTube** has no sign-in flow on purpose. Paste a video (no credentials), add
 an API key once for public playlists, or use Google Takeout for Liked and
 **Watch Later** — which no API can read.
+
+![YouTube playlists and import](docs/screenshots/08-youtube.png)
 
 **Instagram** has no API for saved posts, and automating a logged-in session
 risks a checkpoint on your account. So the app links you to Instagram's export
@@ -108,6 +142,8 @@ page; drop the ZIP in as it downloaded. Only `saved_posts` and
 `saved_collections` are ever extracted — the rest of your account archive is
 never decompressed. Pick *All time* when requesting the export, or older
 collections are left out.
+
+![Instagram export import](docs/screenshots/09-instagram.png)
 
 Both importers are two-phase: read the file, show what's inside, import only
 what you tick.
@@ -215,3 +251,7 @@ Brings the web app level with the macOS app.
 - **[Field Theory CLI](https://github.com/afar1/fieldtheory-cli)** by [Andrew Farah](https://x.com/andrewfarah)
 - Built with React, Express, Vite, better-sqlite3
 - AI features powered by Claude Code CLI / Codex CLI
+
+Screenshots show the bundled sample collection plus a handful of public Hacker
+News, YouTube and web links — not real bookmark data. The Instagram entries are
+fixtures in the export's shape.
