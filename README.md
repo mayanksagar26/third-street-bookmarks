@@ -1,62 +1,53 @@
-# Third Street Bookmarks
+<p align="center">
+  <img src="client/public/favicon.svg" width="112" height="112" alt="Third Street Bookmarks">
+</p>
 
-A local-first bookmark reader that gathers everything you save — X, Hacker News,
-YouTube, Instagram, and any loose link — into one searchable, categorised,
-listenable library. It runs in your browser against a small local server.
-Everything stays on your machine, and the AI features run on the coding CLIs you
-already have installed: no API key, no upload, no account.
+<h1 align="center">Third Street Bookmarks</h1>
 
-> Prefer a native app? [Third Street Bookmarks for macOS](https://github.com/mayanksagar26/third-street-bookmarks-macapp)
-> is the same app in a Tauri shell. Both builds share `~/.tsb`, so they open the
-> same collection with the same read and favourite history.
+<p align="center">
+  <strong>Everything you bookmark, in one place you can search, read and listen to.</strong><br>
+  X, Hacker News, YouTube, Instagram and any loose link — one categorised library in your browser.<br>
+  Runs on your machine. The AI runs on the coding CLI you already have. No API key, no upload, no account.
+</p>
+
+<p align="center">
+  <a href="#getting-started"><strong>Get started</strong></a> ·
+  <a href="#what-it-looks-like">What it looks like</a> ·
+  <a href="#sources">Sources</a> ·
+  <a href="#security-model">Security</a> ·
+  <a href="#changelog">Changelog</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.1.0-black" alt="Version 2.1.0">
+  <img src="https://img.shields.io/badge/Node-20%2B-black" alt="Node 20+">
+  <img src="https://img.shields.io/badge/local--first-yes-black" alt="Local-first">
+</p>
 
 ![The feed](docs/screenshots/02-feed.png)
 
----
+A local-first bookmark reader that gathers everything you save into one searchable,
+categorised, listenable library. It runs in your browser against a small local server.
+Everything stays on your machine, and the AI features — chat, explanations, podcast
+digests — run on Claude Code or Codex, whichever you already have installed.
 
-## What it does
-
-- **Every source in one feed** — X (via [Field Theory](https://github.com/afar1/fieldtheory-cli)), Hacker News, YouTube, Instagram and saved links, each with its own place in the sidebar
-- **Onboarding** — a skippable first-run flow that finds your coding CLI and your existing bookmarks file
-- **Browse Hacker News live** — AI, Front Page and New tabs; nothing is stored until you press Save
-- **Imports** — YouTube videos, public playlists and Google Takeout; Instagram's official export (ZIP, JSON or HTML)
-- **Favourites** — multi-folder, spanning every source, renamable and pinnable, never touched by a sync
-- **Folders** — Instagram collections and YouTube playlists land as folders marked with their service
-- **AI Chat** — ask questions in plain English from a side window (or full screen), with Markdown answers and results you can file into folders
-- **AI on every card** — explain a bookmark in context (this one call may use web search, never web fetch)
-- **Bookmark Podcast** — turn a slice of your collection into an audio digest
-- **Stats & Observations** — reading rate, author diversity, categories, saving patterns
-- **Voice** — browser TTS (free), ElevenLabs or Sarvam AI
-- **Notes, labels, read/unread** — kept in an app-owned SQLite, so no sync ever resets them
-- **Settings** — AI backend, classify engine, bookmarks location, and a reading font (system, Inter, serif, hand-drawn, mono — all bundled, no network)
-- **Profile picture** — TJ by default, any of the Recess gang (Spinelli, Gretchen, Gus, Vince, Mikey, King Bob, Miss Finster), or upload your own
+> Prefer a native app? [Third Street Bookmarks for macOS](https://github.com/mayanksagar26/third-street-bookmarks-macapp)
+> is the same app in a Tauri shell. Both builds share `~/.tsb`, so they open the same
+> collection with the same read and favourite history.
 
 ---
 
-## What it looks like
+## Contents
 
-**Onboarding** — four steps, skippable:
-
-![Onboarding](docs/screenshots/01-onboarding.png)
-
-**Tools** — adding, browsing and the AI features live in one menu:
-
-![Tools menu](docs/screenshots/03-tools.png)
-
-**Chat with your bookmarks** — ask in plain English; the answer cites the
-bookmarks it used, and runs on your local Claude Code or Codex CLI:
-
-![Chat with bookmarks](docs/screenshots/04-chat.png)
-
-**Stats & Observations** — reading rate, author diversity, categories, saving
-patterns over time:
-
-![Stats and observations](docs/screenshots/05-stats.png)
-
-**Bookmark Podcast** — an audio digest of recent bookmarks, a topic or a
-prompt, in browser TTS, ElevenLabs or Sarvam voices:
-
-![Bookmark podcast](docs/screenshots/06-podcast.png)
+- [Getting started](#getting-started)
+- [What it does](#what-it-does)
+- [What it looks like](#what-it-looks-like)
+- [Sources](#sources) — X, Hacker News, YouTube, Instagram, links
+- [Where your data lives](#where-your-data-lives)
+- [Security model](#security-model)
+- [Classifying bookmarks](#classifying-bookmarks)
+- [Stack](#stack)
+- [Changelog](#changelog)
 
 ---
 
@@ -64,8 +55,8 @@ prompt, in browser TTS, ElevenLabs or Sarvam voices:
 
 ### Prerequisites
 
-- Node.js 20+
-- Python 3.9+ (classify / export scripts)
+- **Node.js 20+**
+- **Python 3.9+** — for the classify and export scripts
 - Optional: [Claude Code](https://claude.ai/code) or [Codex CLI](https://github.com/openai/codex) for the AI features
 - Optional: [Field Theory CLI](https://github.com/afar1/fieldtheory-cli) for syncing X bookmarks
 
@@ -91,8 +82,8 @@ Open `http://localhost:5173` in dev, or `http://localhost:3456` after a build.
 
 ### First run
 
-The app walks you through picking an AI CLI and finding your bookmarks. To just
-look around, point it at the sample collection:
+The app walks you through picking an AI CLI and finding your bookmarks. To just look
+around, point it at the sample collection:
 
 ```bash
 DATA_PATH=bookmarks.sample.json npm start
@@ -106,12 +97,67 @@ npm test             # ingest parsers, id namespacing, merge rules, sorts, markd
 
 ---
 
+## What it does
+
+- **Every source in one feed** — X (via [Field Theory](https://github.com/afar1/fieldtheory-cli)), Hacker News, YouTube, Instagram and saved links, each with its own place in the sidebar.
+- **Onboarding** — a skippable first-run flow that finds your coding CLI and your existing bookmarks file.
+- **Browse Hacker News live** — AI, Front Page and New tabs; nothing is stored until you press Save.
+- **Imports** — YouTube videos, public playlists and Google Takeout; Instagram's official export (ZIP, JSON or HTML).
+- **Favourites** — multi-folder, spanning every source, renamable and pinnable, never touched by a sync.
+- **Folders** — Instagram collections and YouTube playlists land as folders marked with their service.
+- **AI Chat** — ask questions in plain English from a side window (or full screen), with Markdown answers and results you can file into folders.
+- **AI on every card** — explain a bookmark in context (this one call may use web search, never web fetch).
+- **Bookmark Podcast** — turn a slice of your collection into an audio digest.
+- **Stats & Observations** — reading rate, author diversity, categories, saving patterns.
+- **Voice** — browser TTS (free), ElevenLabs or Sarvam AI.
+- **Notes, labels, read/unread** — kept in an app-owned SQLite, so no sync ever resets them.
+- **Settings** — AI backend, classify engine, bookmarks location, and a reading font (system, Inter, serif, hand-drawn, mono — all bundled, no network).
+- **Profile picture** — TJ by default, any of the Recess gang (Spinelli, Gretchen, Gus, Vince, Mikey, King Bob, Miss Finster), or upload your own.
+
+---
+
+## What it looks like
+
+### Onboarding
+
+Four steps, all skippable.
+
+![Onboarding](docs/screenshots/01-onboarding.png)
+
+### Tools
+
+Adding, browsing and the AI features live in one menu.
+
+![Tools menu](docs/screenshots/03-tools.png)
+
+### Chat with your bookmarks
+
+Ask in plain English; the answer cites the bookmarks it used, and runs on your local
+Claude Code or Codex CLI.
+
+![Chat with bookmarks](docs/screenshots/04-chat.png)
+
+### Stats and observations
+
+Reading rate, author diversity, categories, saving patterns over time.
+
+![Stats and observations](docs/screenshots/05-stats.png)
+
+### Bookmark podcast
+
+An audio digest of recent bookmarks, a topic or a prompt, in browser TTS, ElevenLabs or
+Sarvam voices.
+
+![Bookmark podcast](docs/screenshots/06-podcast.png)
+
+---
+
 ## Sources
 
-One collection, several origins. **All Bookmarks** / **Unread Only** answers
-*read or unread*; the **Sources** list answers *from where*. The two compose.
-Clicking a source opens it: every source shows what you kept from it, and every
-source but X adds a tab for the surface that puts things in.
+One collection, several origins. **All Bookmarks** / **Unread Only** answers *read or
+unread*; the **Sources** list answers *from where*. The two compose. Clicking a source
+opens it: every source shows what you kept from it, and every source but X adds a tab
+for the surface that puts things in.
 
 | Source | How it gets in | Needs |
 |---|---|---|
@@ -121,33 +167,39 @@ source but X adds a tab for the surface that puts things in.
 | **Instagram** | Official data export | export |
 | **Saved Links** | Paste any URL | nothing |
 
-**X sync** borrows cookies from the browser you actually read X in — pick it in
-the Sync & Classify settings (Chrome, Chromium, Brave, Edge, Comet, Dia, Helium or
-Firefox). Sync then classifies only what it brought in.
+### X
 
-**Hacker News** is browsed, not synced. Thirty front-page stories arriving every
-morning would bury the things you chose, so stories already in your collection
-drop out of the list:
+**X sync** borrows cookies from the browser you actually read X in — pick it in the Sync
+& Classify settings (Chrome, Chromium, Brave, Edge, Comet, Dia, Helium or Firefox). Sync
+then classifies only what it brought in.
+
+### Hacker News
+
+Browsed, not synced. Thirty front-page stories arriving every morning would bury the
+things you chose, so stories already in your collection drop out of the list.
 
 ![Browsing Hacker News](docs/screenshots/07-hackernews.png)
 
-**YouTube** has no sign-in flow on purpose. Paste a video (no credentials), add
-an API key once for public playlists, or use Google Takeout for Liked and
-**Watch Later** — which no API can read.
+### YouTube
+
+No sign-in flow, on purpose. Paste a video (no credentials), add an API key once for
+public playlists, or use Google Takeout for Liked and **Watch Later** — which no API can
+read.
 
 ![YouTube playlists and import](docs/screenshots/08-youtube.png)
 
-**Instagram** has no API for saved posts, and automating a logged-in session
-risks a checkpoint on your account. So the app links you to Instagram's export
-page; drop the ZIP in as it downloaded. Only `saved_posts` and
-`saved_collections` are ever extracted — the rest of your account archive is
-never decompressed. Pick *All time* when requesting the export, or older
-collections are left out.
+### Instagram
+
+Instagram has no API for saved posts, and automating a logged-in session risks a
+checkpoint on your account. So the app links you to Instagram's export page; drop the
+ZIP in as it downloaded. Only `saved_posts` and `saved_collections` are ever extracted —
+the rest of your account archive is never decompressed. Pick *All time* when requesting
+the export, or older collections are left out.
 
 ![Instagram export import](docs/screenshots/09-instagram.png)
 
-Both importers are two-phase: read the file, show what's inside, import only
-what you tick.
+Both importers are two-phase: read the file, show what's inside, import only what you
+tick.
 
 ---
 
@@ -163,22 +215,21 @@ what you tick.
 └── auth-token          per-launch API credential (0600)
 ```
 
-X bookmarks stay in Field Theory's `bookmarks.json`, wherever Settings →
-Bookmarks points. Ids are namespaced on read (`hn:38104219`, `yt:dQw4w9WgXcQ`)
-so a Hacker News item never inherits a tweet's state.
+X bookmarks stay in Field Theory's `bookmarks.json`, wherever Settings → Bookmarks points.
+Ids are namespaced on read (`hn:38104219`, `yt:dQw4w9WgXcQ`) so a Hacker News item never
+inherits a tweet's state.
 
-Upgrading from 1.x: on first start the server copies the repo-root
-`settings.json` into `~/.tsb` and keeps using your repo-root `bookmarks.json`.
+Upgrading from 1.x: on first start the server copies the repo-root `settings.json` into
+`~/.tsb` and keeps using your repo-root `bookmarks.json`.
 
-Override locations with `TSB_DATA_DIR`, `DATA_PATH` (X bookmarks file) and
-`STATE_DB`.
+Override locations with `TSB_DATA_DIR`, `DATA_PATH` (X bookmarks file) and `STATE_DB`.
 
 ---
 
 ## Security model
 
-The server holds every bookmark you've saved and can spawn a coding agent, so
-"it's only localhost" isn't treated as a threat model.
+The server holds every bookmark you've saved and can spawn a coding agent, so "it's only
+localhost" isn't treated as a threat model.
 
 | Control | What it removes |
 |---|---|
@@ -259,9 +310,9 @@ Brings the web app level with the macOS app.
 ## Credits
 
 - **[Field Theory CLI](https://github.com/afar1/fieldtheory-cli)** by [Andrew Farah](https://x.com/andrewfarah)
-- Built with React, Express, Vite, better-sqlite3
+- Built with React, Express, Vite and better-sqlite3
 - AI features powered by Claude Code CLI / Codex CLI
 
-Screenshots show the bundled sample collection plus a handful of public Hacker
-News, YouTube and web links — not real bookmark data. The Instagram entries are
-fixtures in the export's shape.
+<sub>Screenshots show the bundled sample collection plus a handful of public Hacker News,
+YouTube and web links — not real bookmark data. The Instagram entries are fixtures in the
+export's shape.</sub>
