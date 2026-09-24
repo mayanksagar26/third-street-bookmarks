@@ -1,6 +1,7 @@
 {
   "name": "third-street-bookmarks",
   "version": "2.1.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "setup": "npm install && npm install --prefix server && npm install --prefix client",

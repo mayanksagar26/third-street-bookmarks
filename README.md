@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="#getting-started"><strong>Get started</strong></a> ·
+  <a href="https://github.com/mayanksagar26/third-street-bookmarks/releases/latest">Releases</a> ·
   <a href="#what-it-looks-like">What it looks like</a> ·
   <a href="#sources">Sources</a> ·
   <a href="#security-model">Security</a> ·
@@ -19,9 +20,10 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.1.0-black" alt="Version 2.1.0">
+  <a href="https://github.com/mayanksagar26/third-street-bookmarks/actions/workflows/ci.yml"><img src="https://github.com/mayanksagar26/third-street-bookmarks/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/mayanksagar26/third-street-bookmarks/releases/latest"><img src="https://img.shields.io/github/v/release/mayanksagar26/third-street-bookmarks?color=black&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/Node-20%2B-black" alt="Node 20+">
-  <img src="https://img.shields.io/badge/local--first-yes-black" alt="Local-first">
+  <img src="https://img.shields.io/badge/license-MIT-black" alt="MIT">
 </p>
 
 ![The feed](docs/screenshots/02-feed.png)
@@ -61,6 +63,9 @@ digests — run on Claude Code or Codex, whichever you already have installed.
 - Optional: [Field Theory CLI](https://github.com/afar1/fieldtheory-cli) for syncing X bookmarks
 
 ### Install and run
+
+Clone the repository, or download a tagged version from
+[Releases](https://github.com/mayanksagar26/third-street-bookmarks/releases/latest).
 
 ```bash
 git clone https://github.com/mayanksagar26/third-street-bookmarks
@@ -304,6 +309,12 @@ Brings the web app level with the macOS app.
 ### 1.0.0
 
 - Initial release: X bookmark reader on Field Theory with AI chat, podcast, stats and voice.
+
+---
+
+## Licence
+
+MIT © Mayank Sagar
 
 ---
 
